@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="el">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Υπολογισμός Κυκλοφορητών</title>
+  <!-- Κάρτα προεπισκόπησης (LinkedIn, μηνύματα) — η εικόνα είναι το og.png -->
+  <meta name="description" content="Required pump head for hydronic circuits — Darcy-Weisbach for pipework, loss coefficients for fittings, water or glycol, velocity checks.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Pump Head Calculator">
+  <meta property="og:description" content="Required pump head for hydronic circuits — Darcy-Weisbach for pipework, loss coefficients for fittings, water or glycol, velocity checks.">
+  <meta property="og:url" content="https://vkocmac.github.io/PumpCalculator/">
+  <meta property="og:image" content="https://vkocmac.github.io/PumpCalculator/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="627">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <h1>💧 Υπολογισμός Κυκλοφορητών</h1>
+    <span class="sub">Μανομετρικό δικτύου — Darcy-Weisbach + ζ/Kv</span>
+  </header>
+
+  <div class="layout">
+    <aside id="sidebar"></aside>
+    <main id="main"></main>
+  </div>
+
+  <div id="warnings"></div>
+
+  <footer>
+    Δεδομένα (σωλήνες/εξαρτήματα/ρευστά) στο <code>data.js</code> — τα πειράζεις χωρίς να αγγίξεις τον κώδικα.
+  </footer>
+
+  <input type="file" id="fileInput" accept=".json" hidden>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
