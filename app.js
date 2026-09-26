@@ -570,7 +570,7 @@
     net.nodes = (net.nodes || []).map(n => ({
       id: n.id || uid(), type: DB.NODE_TYPES.some(t => t.id === n.type) ? n.type : "other", label: n.label || "",
       dP: n.dP === undefined ? "" : n.dP, unit: n.unit || "kPa", Q: n.Q === undefined ? "" : n.Q, loadKW: n.loadKW === undefined ? "" : n.loadKW,
-      ...(n.vessel ? { vessel: true } : {}), ...(n.curve ? { curve: { points: (n.curve.points || []).map(x => ({ Q: x.Q, H: x.H })), eta: n.curve.eta === undefined ? "" : n.curve.eta } } : {})
+      ...(n.vessel ? { vessel: true } : {}), ...(n.grid && typeof n.grid === "object" ? { grid: n.grid } : {}), ...(n.curve ? { curve: { points: (n.curve.points || []).map(x => ({ Q: x.Q, H: x.H })), eta: n.curve.eta === undefined ? "" : n.curve.eta } } : {})
     }));
     if (net.nodes.filter(n => n.vessel).length > 1) { let first = true; net.nodes.forEach(n => { if (n.vessel) { if (!first) delete n.vessel; first = false; } }); }
     if (!net.nodes.length) net.nodes.push({ id: uid(), type: PUMP, label: "Αντλία", dP: "", unit: "kPa", Q: "", loadKW: "" });
@@ -1092,9 +1092,13 @@
     .schem .port-free{cursor:pointer;outline:none}
     .schem .port-free circle.hit{fill:transparent;stroke:none}
     .schem .port-free:hover circle,.schem .port-free:focus-visible circle{fill:#F5A524}
+    .schem .ghost{fill:#0B6FB8;fill-opacity:.08;stroke:#0B6FB8;stroke-width:1.5;stroke-dasharray:6 4}
+    .schem .ghost.busy{fill:#B42318;stroke:#B42318}
+.schem .nd{touch-action:none}
+    .schem .nd.dragging{opacity:.85;cursor:grabbing}
     .schem .t-ph{font-family:"IBM Plex Mono",Consolas,monospace;font-size:10.5px;font-weight:600;fill:#0B4F86}
   </style>`;
-  let netAnchors = new Map(), edgeAnchors = new Map();
+  let netAnchors = new Map(), edgeAnchors = new Map(), schemGeom = null;
   /* Τελευταία θέση κάθε σημείου στο σχέδιο: αν κοπεί ένας σωλήνας, ό,τι μένει
      ασύνδετο κρατά τη θέση του (δεν πετάγεται κάτω) ώστε να το ξαναενώσεις. */
   const lastPos = new Map();
@@ -1207,10 +1211,20 @@
       });
       nextRow = Math.max(nextRow, nextR);
     }
+    layer.forEach((L, id) => { if (row.has(id)) lastPos.set(id, { L, r: row.get(id) }); });
+    // Θέσεις που όρισε ο χρήστης (σύρσιμο): υπερισχύουν· οι σωλήνες ακολουθούν
+    const mk = project.draw === "line" ? "line" : "u";
+    net.nodes.forEach(n => {
+      const gp = n.grid && n.grid[mk]; if (!gp) return;
+      const oR = row.get(n.id), dR = gp.r - oR;
+      layer.set(n.id, gp.c); row.set(n.id, gp.r);
+      if (rspan.has(n.id)) { const sp = rspan.get(n.id); rspan.set(n.id, [sp[0] + dR, sp[1] + dR]); g.inE.get(n.id).forEach(id => { if (land.has(id)) land.set(id, land.get(id) + dR); }); }
+      else g.inE.get(n.id).forEach(id => { if (land.has(id) && land.get(id) === oR) land.set(id, gp.r); });
+    });
     let maxL = 0, maxR = 0;
     layer.forEach(L => { maxL = Math.max(maxL, L); });
-    row.forEach(r => { maxR = Math.max(maxR, r); });
-    layer.forEach((L, id) => { if (row.has(id)) lastPos.set(id, { L, r: row.get(id) }); });
+    row.forEach((r, id) => { maxR = Math.max(maxR, four.has(id) ? r + 1 : r); });
+    rspan.forEach(sp => { maxR = Math.max(maxR, sp[1]); });
     return { layer, row, rows: Math.max(nextRow, maxR + 1, resv + 1, 1), maxL, back, ret, land, rspan, four };
   }
   function schematicNet(res, interactive, availW) {
@@ -1222,6 +1236,7 @@
     const isR = id => ret.has(id);
     const colW = Math.max(290, Math.min(320, Math.floor((availW - 150) / (maxL + 1)))), rowH = 104, padT = 64, padL = 60;
     const X = id => padL + layer.get(id) * colW, Yr = r => padT + r * rowH, Y = id => Yr(row.get(id));
+    if (interactive) schemGeom = { padL, padT, colW, rowH, cells: new Map(net.nodes.map(n => [n.id, { c: layer.get(n.id), r: row.get(n.id), four: four.has(n.id), span: rspan.get(n.id) }])) };
     const nBack = net.edges.filter(e => back.has(e.id) && e.from !== e.to && !isR(e.from) && !isR(e.to)).length;
     const xMax = padL + maxL * colW + 70, yMax = padT + (rows - 1) * rowH + 30;
     const W = Math.max(availW, xMax + 80), H = yMax + 56 + nBack * 18;
@@ -1311,12 +1326,19 @@
         const yu0 = bottomOf(u), yv0 = bottomOf(v), xa = xu - (hu > 20 ? 22 : 0) - 8 * k, xb = xv - (hv > 20 ? 22 : 0) - 8 * k;
         if (v.type === PUMP) { const xl = xv - 42 - 8 * k; d = `M${xa} ${yu0} V${yB} H${xl} V${yv} H${xv - hv}`; seg = [Math.min(xa, xl), Math.max(xa, xl), yB]; dir = xl < xa ? -1 : 1; }
         else { d = `M${xa} ${yu0} V${yB} H${xb} V${yv0}`; seg = [Math.min(xa, xb), Math.max(xa, xb), yB]; dir = xb < xa ? -1 : 1; }
+      } else if (xv <= xu && !isR(e.from) && !isR(e.to)) {
+        // Μετά από μετακίνηση: το επόμενο σημείο βρέθηκε αριστερά
+        const ym = Math.max(yu, yv) + rowH / 2, x1 = xu + hu + 16, x2 = xv - hv - 16;
+        d = `M${xu} ${yu} H${x1} V${ym} H${x2} V${yv} H${xv - hv}`; seg = [x2, x1, ym]; dir = -1;
       } else if (yv === yu) { d = `M${xu} ${yu} H${xv}`; seg = [xu + hu, xv - hv, yu]; }
       else if (inSpan(e.from, yv)) { d = `M${xu} ${yv} H${xv}`; seg = [xu + hu, xv - hv, yv]; }
       else if (inSpan(e.to, yu)) { d = `M${xu} ${yu} H${xv}`; seg = [xu + hu, xv - hv, yu]; }
       else if (yv > yu) { const ex = xu + hu + 18; d = `M${xu} ${yu} H${ex} V${yv} H${xv}`; seg = [ex, xv - hv, yv]; }
       else { const ex = xv - hv - 18; d = `M${xu} ${yu} H${ex} V${yv} H${xv}`; seg = [xu + hu, ex, yu]; }
-      const [s1, s2, sy] = seg, mx = (s1 + s2) / 2, len = Math.abs(s2 - s1);
+      const [s1, s2, sy] = seg;
+      // Επιστροφή από τερματική: ετικέτα κοντά στο σημείο που καταλήγει (εκεί δεν περνούν άλλες κατακόρυφες)
+      const nearEnd = !isR(e.from) && isR(e.to) && dir < 0 && Math.abs(s2 - s1) > 300;
+      const len = nearEnd ? 260 : Math.abs(s2 - s1), mx = nearEnd ? s1 + 130 : (s1 + s2) / 2;
       const warns = c.complete && !e.direct ? branchWarns(e, c, res) : [];
       const cls = !c.complete ? "ln-inc" : e.direct ? "ln-direct" : onWorst.has(e.id) ? "ln-worst" : "ln-norm";
       const sel = interactive && e.id === selId;
@@ -1552,6 +1574,7 @@
         <p class="desc" id="ndPress"></p></div></div>`}
       <div class="dr-actions">
         <button class="primary small" data-act="plus-node" data-id="${esc(n.id)}">+ Σωλήνας από εδώ</button>
+        ${n.grid && n.grid[project.draw === "line" ? "line" : "u"] ? `<button class="ghost small" data-act="reset-pos">↺ Αυτόματη θέση</button>` : ""}
         <button class="ghost small danger" data-act="del-node" data-id="${esc(n.id)}">Διαγραφή</button>
       </div>
     </section>`;
@@ -1692,6 +1715,7 @@
               <button class="${project.draw === "line" ? "" : "on"}" data-act="draw" data-v="u" aria-pressed="${project.draw !== "line"}" title="Προσαγωγή πάνω, επιστροφή κάτω (όπως στα P&ID)">⊐ Προσ./επιστρ.</button>
               <button class="${project.draw === "line" ? "on" : ""}" data-act="draw" data-v="line" aria-pressed="${project.draw === "line"}" title="Όλα σε σειρά από αριστερά προς τα δεξιά">→ Γραμμή</button>
             </div>
+            ${project.net.nodes.some(n => n.grid && n.grid[project.draw === "line" ? "line" : "u"]) ? `<button class="ghost small" data-act="auto-layout" title="Ξεχνά τις θέσεις που όρισες με σύρσιμο">↺ Αυτόματη διάταξη</button>` : ""}
             <button class="ghost small" data-act="net-expand" aria-pressed="${netFull}">${netFull ? "✕ Κλείσιμο μεγέθυνσης" : "⤢ Μεγέθυνση"}</button>
             <div class="segctl" role="group" aria-label="Τρόπος υπολογισμού">
               <button data-act="mode" data-mode="simple" aria-pressed="false">Απλή διαδρομή</button>
@@ -1699,7 +1723,7 @@
             </div>
           </div>
         </div>
-        <p class="lead">Στήσε το κύκλωμα ξεκινώντας από την αντλία. Πάτα το <b>+</b> ενός σημείου: νέος σωλήνας προς νέο εξοπλισμό, ή σωλήνας προς υπάρχον σημείο — ${open ? "σε <b>ανοιχτό κύκλωμα</b> σημείο χωρίς συνέχεια είναι ανοιχτό άκρο (π.χ. πύργος, δεξαμενή)" : "έτσι κλείνει το κύκλωμα πίσω στην αντλία"}. Πάτα έναν σωλήνα ή εξοπλισμό για τα στοιχεία του. Στο + υπάρχει και «Είσοδος» (σωλήνας προς το σημείο, π.χ. δεύτερος ψύκτης σε συλλέκτη). Μετά από διαχωριστή ή buffer βάλε δική του αντλία — κάθε αντλία βγαίνει με το δικό της H.</p>
+        <p class="lead">Στήσε το κύκλωμα ξεκινώντας από την αντλία. Πάτα το <b>+</b> ενός σημείου: νέος σωλήνας προς νέο εξοπλισμό, ή σωλήνας προς υπάρχον σημείο — ${open ? "σε <b>ανοιχτό κύκλωμα</b> σημείο χωρίς συνέχεια είναι ανοιχτό άκρο (π.χ. πύργος, δεξαμενή)" : "έτσι κλείνει το κύκλωμα πίσω στην αντλία"}. Πάτα έναν σωλήνα ή εξοπλισμό για τα στοιχεία του· <b>σύρε</b> ένα σημείο για να το μετακινήσεις (οι σωλήνες ακολουθούν). Στο + υπάρχει και «Είσοδος» (σωλήνας προς το σημείο, π.χ. δεύτερος ψύκτης σε συλλέκτη). Μετά από διαχωριστή ή buffer βάλε δική του αντλία — κάθε αντλία βγαίνει με το δικό της H.</p>
         <div class="netstatus" id="netStatus"></div>
         <div class="schem-outer" id="schemOuter"><div class="schem-wrap" id="schemWrap"><div id="schem"></div></div><div id="pop" class="pop" hidden></div></div>
         <div class="legend">
@@ -2299,6 +2323,8 @@
       if (a === "del") { delEdge(id); return; }
       if (a === "close-drawer") { selId = null; selNode = null; render(); return; }
       if (a === "net-expand") { netFull = !netFull; zoomFit = netFull; if (!netFull) netZoom = 1; render(); return; }
+      if (a === "auto-layout") { snap(); const mk = project.draw === "line" ? "line" : "u"; project.net.nodes.forEach(n => { if (n.grid) { delete n.grid[mk]; if (!Object.keys(n.grid).length) delete n.grid; } }); render(); toast("Αυτόματη διάταξη.", true); return; }
+      if (a === "reset-pos") { const n = curNode(); if (n && n.grid) { snap(); const mk = project.draw === "line" ? "line" : "u"; delete n.grid[mk]; if (!Object.keys(n.grid).length) delete n.grid; render(); } return; }
       if (a === "draw") { project.draw = t.dataset.v === "line" ? "line" : "u"; lastPos.clear(); pop = null; render(); return; }
       if (a === "zoom") { const v = t.dataset.v; setZoom(v === "in" ? netZoom * 1.2 : v === "out" ? netZoom / 1.2 : 1, v === "fit"); const f = $('[data-act="zoom"][data-v="fit"]'); if (f) f.classList.toggle("on", zoomFit); return; }
     }
@@ -2364,6 +2390,49 @@
     document.addEventListener("change", onChange);
     document.addEventListener("click", onClick);
     document.addEventListener("keydown", onKey);
+    /* Μετακίνηση σημείου με σύρσιμο: κουμπώνει σε θέση του πλέγματος· οι σωλήνες ακολουθούν. */
+    let drag = null, noClickUntil = 0;
+    const cellAt = (x, y) => { const G = schemGeom; return { c: Math.max(0, Math.round((x - G.padL) / G.colW)), r: Math.max(0, Math.round((y - G.padT) / G.rowH)) }; };
+    const cellBusy = (id, c, r) => { for (const [k, v] of schemGeom.cells) { if (k === id || v.c !== c) continue; if (v.r === r || (v.four && v.r + 1 === r) || (v.span && r >= v.span[0] && r <= v.span[1])) return true; } const me = schemGeom.cells.get(id); if (me && me.four) for (const [k, v] of schemGeom.cells) if (k !== id && v.c === c && v.r === r + 1) return true; return false; };
+    document.addEventListener("pointerdown", e => {
+      if (e.button !== 0 || !e.target.closest || project.mode !== "network" || !schemGeom) return;
+      const el = e.target.closest("#schem g.nd"); if (!el || e.target.closest(".port-free")) return;
+      const cell = schemGeom.cells.get(el.dataset.id); if (!cell) return;
+      drag = { id: el.dataset.id, el, x0: e.clientX, y0: e.clientY, cx: schemGeom.padL + cell.c * schemGeom.colW, cy: schemGeom.padT + cell.r * schemGeom.rowH, moved: false, ghost: null, cell: null };
+    });
+    document.addEventListener("pointermove", e => {
+      if (!drag) return;
+      const dx = (e.clientX - drag.x0) / netZoom, dy = (e.clientY - drag.y0) / netZoom;
+      if (!drag.moved && Math.hypot(dx, dy) < 6) return;
+      if (!drag.moved) {
+        drag.moved = true; pop = null; const pp = $("#pop"); if (pp) pp.hidden = true;
+        drag.el.classList.add("dragging");
+        const svg = drag.el.ownerSVGElement;
+        drag.ghost = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        drag.ghost.setAttribute("class", "ghost"); drag.ghost.setAttribute("rx", "12"); svg.insertBefore(drag.ghost, svg.firstChild.nextSibling);
+      }
+      e.preventDefault();
+      drag.el.setAttribute("transform", `translate(${dx} ${dy})`);
+      const c = cellAt(drag.cx + dx, drag.cy + dy), G = schemGeom, busy = cellBusy(drag.id, c.c, c.r);
+      drag.cell = busy ? null : c;
+      const gx = G.padL + c.c * G.colW, gy = G.padT + c.r * G.rowH;
+      drag.ghost.setAttribute("x", gx - 76); drag.ghost.setAttribute("y", gy - 34); drag.ghost.setAttribute("width", 152); drag.ghost.setAttribute("height", 68);
+      drag.ghost.setAttribute("class", "ghost" + (busy ? " busy" : ""));
+    }, { passive: false });
+    document.addEventListener("pointerup", () => {
+      if (!drag) return;
+      const d = drag; drag = null;
+      if (!d.moved) return;
+      noClickUntil = Date.now() + 350;
+      const n = project.net.nodes.find(x => x.id === d.id), mk = project.draw === "line" ? "line" : "u";
+      const cur = schemGeom.cells.get(d.id);
+      if (!n || !d.cell || (cur && cur.c === d.cell.c && cur.r === d.cell.r)) { if (!d.cell && n) toast("Η θέση είναι πιασμένη από άλλο σημείο."); renderSchematic(calcProject()); return; }
+      snap();
+      n.grid = { ...(n.grid || {}), [mk]: { c: d.cell.c, r: d.cell.r } };
+      render();
+      toast(`Μετακινήθηκε: ${nodeLabel(n)}. Οι σωλήνες ακολουθούν.`, true);
+    });
+    document.addEventListener("click", e => { if (Date.now() < noClickUntil) { e.stopPropagation(); e.preventDefault(); } }, true);
     document.addEventListener("wheel", e => {
       if (!(e.ctrlKey || e.metaKey) || !e.target.closest || !e.target.closest("#schemWrap")) return;
       e.preventDefault(); setZoom(netZoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1), false);
