@@ -1084,6 +1084,14 @@
     .schem .vsl rect{fill:#E8F1FA;stroke:#0B4F86;stroke-width:1.5}
     .schem .vsl path{stroke:#0B4F86;stroke-width:1.5;fill:none}
     .schem .vsl text{font-size:9px;font-weight:700;fill:#0B4F86}
+    .schem .t-port{font-size:9.5px;fill:#5E6E80}
+    .schem .t-side{font-size:9.5px;font-weight:600;letter-spacing:.04em;fill:#9AABBE}
+    .schem .sepdiv{stroke:#D5DCE4;stroke-width:1;stroke-dasharray:3 3}
+    .schem .port-on{fill:#132033}
+    .schem .port-free circle{fill:#FFF6E5;stroke:#B26B00;stroke-width:1.6;stroke-dasharray:3 2}
+    .schem .port-free{cursor:pointer;outline:none}
+    .schem .port-free circle.hit{fill:transparent;stroke:none}
+    .schem .port-free:hover circle,.schem .port-free:focus-visible circle{fill:#F5A524}
     .schem .t-ph{font-family:"IBM Plex Mono",Consolas,monospace;font-size:10.5px;font-weight:600;fill:#0B4F86}
   </style>`;
   let netAnchors = new Map(), edgeAnchors = new Map();
@@ -1091,6 +1099,8 @@
      ασύνδετο κρατά τη θέση του (δεν πετάγεται κάτω) ώστε να το ξαναενώσεις. */
   const lastPos = new Map();
   const MANIFOLD = ["junction", "header", "sep", "buffer", "tank"];
+  /* Διαχωριστής / buffer / δεξαμενή που χωρίζει το δίκτυο: σχεδιάζεται ως δοχείο με 4 στόμια. */
+  function fourPortIds(net) { return new Set(net.nodes.filter(n => nodeType(n.type).decoupler && isDecNode(n)).map(n => n.id)); }
   function nodeHalf(n) { return n.type === PUMP ? 20 : n.type === "junction" ? 7 : 68; }
   /* Διάταξη: στήλες = μεγαλύτερη απόσταση από την αρχή. Οι ακμές που γυρίζουν πίσω
      (επιστροφή στην αντλία ή στον διαχωριστή) βρίσκονται με DFS και σχεδιάζονται από κάτω. */
@@ -1140,7 +1150,9 @@
     const row = new Map(), occ = new Set();
     let nextRow = 0;
     const free = (L, r) => !occ.has(L + ":" + r);
-    const put = (v, r) => { row.set(v, r); occ.add(layer.get(v) + ":" + r); };
+    const four = fourPortIds(net);
+    let resv = -1;
+    const put = (v, r) => { row.set(v, r); occ.add(layer.get(v) + ":" + r); if (four.has(v)) { occ.add(layer.get(v) + ":" + (r + 1)); resv = Math.max(resv, r + 1); nextRow = Math.max(nextRow, r + 2); } };
     const visit = u => {
       let first = true;
       fwdOut(u).forEach(id => {
@@ -1165,7 +1177,7 @@
     // Επιστροφή: στήλες προς τα αριστερά, γραμμές κάτω από την προσαγωγή
     const land = new Map(), rspan = new Map();
     if (ret.size) {
-      let B = 0; row.forEach(r => { B = Math.max(B, r + 1); });
+      let B = resv + 1; row.forEach(r => { B = Math.max(B, r + 1); });
       let nextR = B;
       const indegR = new Map([...ret].map(v => [v, fwdIn(v).filter(id => ret.has(g.eById.get(id).from)).length]));
       const q2 = [...ret].filter(v => indegR.get(v) === 0), ord = [];
@@ -1199,11 +1211,14 @@
     layer.forEach(L => { maxL = Math.max(maxL, L); });
     row.forEach(r => { maxR = Math.max(maxR, r); });
     layer.forEach((L, id) => { if (row.has(id)) lastPos.set(id, { L, r: row.get(id) }); });
-    return { layer, row, rows: Math.max(nextRow, maxR + 1, 1), maxL, back, ret, land, rspan };
+    return { layer, row, rows: Math.max(nextRow, maxR + 1, resv + 1, 1), maxL, back, ret, land, rspan, four };
   }
   function schematicNet(res, interactive, availW) {
     const g = res.g, net = project.net;
-    const { layer, row, rows, maxL, back, ret, land, rspan } = layoutNet(res);
+    const { layer, row, rows, maxL, back, ret, land, rspan, four } = layoutNet(res);
+    const portOf = new Map();
+    four.forEach(id => { const P = portsOf(res, g.nById.get(id)); ["pIn", "pOut", "sIn", "sOut"].forEach(k => P[k].forEach(x => portOf.set(x.e.id + ":" + id, k))); });
+    const port = (eid, nid) => portOf.get(eid + ":" + nid);
     const isR = id => ret.has(id);
     const colW = Math.max(290, Math.min(320, Math.floor((availW - 150) / (maxL + 1)))), rowH = 104, padT = 64, padL = 60;
     const X = id => padL + layer.get(id) * colW, Yr = r => padT + r * rowH, Y = id => Yr(row.get(id));
@@ -1220,6 +1235,7 @@
     const span = new Map();
     net.nodes.forEach(n => {
       if (isR(n.id)) { if (rspan.has(n.id)) span.set(n.id, rspan.get(n.id)); return; }
+      if (four.has(n.id)) return;
       if (!MANIFOLD.includes(n.type)) return;
       const L = layer.get(n.id), r = row.get(n.id); let r0 = r, r1 = r;
       g.outE.get(n.id).forEach(id => { if (back.has(id)) return; const v = g.eById.get(id).to; if (isR(v)) return; if (layer.get(v) > L) { r0 = Math.min(r0, row.get(v)); r1 = Math.max(r1, row.get(v)); } });
@@ -1237,7 +1253,9 @@
     let bi = 0;
     const dropN = new Map(), upN = new Map();
     const cellTaken = (L, r) => net.nodes.some(m => layer.get(m.id) === L && row.get(m.id) === r);
-    const bottomOf = n => { const sp = span.get(n.id), yb = sp ? Yr(sp[1]) : Y(n.id); return yb + (n.type === PUMP ? 20 : n.type === "junction" ? 8 : 27); };
+    const bottomOf = n => { const sp = span.get(n.id), yb = four.has(n.id) ? Yr(row.get(n.id) + 1) : sp ? Yr(sp[1]) : Y(n.id); return yb + (n.type === PUMP ? 20 : n.type === "junction" ? 8 : 27); };
+    const intoPumpLeft = (v, xv, yv, k) => ` H${xv - 42 - 8 * k} V${yv} H${xv - 20}`;
+    const rowsBetween = (L0, L1, r) => net.nodes.some(m => { const L = layer.get(m.id); return L > L0 && L < L1 && row.get(m.id) === r; });
     net.edges.forEach(e => {
       const x = res.ecById.get(e.id), c = x.c;
       const u = g.nById.get(e.from), v = g.nById.get(e.to);
@@ -1245,6 +1263,20 @@
       let d, seg, dir = 1;
       if (e.from === e.to) {
         d = `M${xu} ${yu} V${yu - 44} H${xu + 60} V${yu}`; seg = [xu, xu + 60, yu - 44];
+      } else if (four.has(e.to) && port(e.id, e.to) === "sIn") {
+        // Επιστροφή δευτερεύοντος → κάτω δεξιό στόμιο
+        const k = upN.get(e.to) || 0; upN.set(e.to, k + 1);
+        const xp = xv + hv, yp = Yr(row.get(e.to) + 1), xm = xp + 18 + 8 * k;
+        const xs = isR(e.from) || xu > xp ? xu - hu : xu + hu;
+        d = `M${xs} ${yu} H${xm} V${yp} H${xp}`; seg = Math.abs(yu - yp) < 1 ? [Math.min(xp, xs), Math.max(xp, xs), yp] : [Math.min(xm, xs), Math.max(xm, xs), yu]; dir = xm < xs ? -1 : 1;
+      } else if (four.has(e.from) && port(e.id, e.from) === "pOut") {
+        // Κάτω αριστερό στόμιο → πίσω στην αντλία / την παραγωγή
+        const k = bi++, xp = xu - hu, r1 = row.get(e.from) + 1;
+        const yp = rowsBetween(layer.get(e.to) - 1, layer.get(e.from), r1) ? yMax + 36 + k * 18 : Yr(r1);
+        if (yp !== Yr(r1)) d = `M${xp} ${Yr(r1)} H${xp - 16} V${yp}`; else d = `M${xp} ${yp}`;
+        if (v.type === PUMP) { d += ` H${xv - 42 - 8 * k} V${yv} H${xv - hv}`; seg = [xv - 42, yp === Yr(r1) ? xp : xp - 16, yp]; }
+        else { d += ` H${xv} V${bottomOf(v)}`; seg = [xv, yp === Yr(r1) ? xp : xp - 16, yp]; }
+        dir = -1;
       } else if (!isR(e.from) && isR(e.to)) {
         // Από την προσαγωγή (τερματική μονάδα) κάτω στη γραμμή επιστροφής, προς τα αριστερά
         const L = layer.get(e.from), k = dropN.get(L) || 0; dropN.set(L, k + 1);
@@ -1266,7 +1298,8 @@
         const L = layer.get(e.to), rv = row.get(e.to), sp = span.get(e.to), rb = sp ? sp[1] : rv;
         let blocked = false; for (let r = rb + 1; r < rows; r++) if (cellTaken(L, r) && !isR(net.nodes.find(m => layer.get(m.id) === L && row.get(m.id) === r).id)) blocked = true;
         const xs = xu - hu;
-        if (!blocked) { const xt = xv + (hv > 20 ? 22 : 0) + 10 * k; d = `M${xs} ${yu} H${xt} V${bottomOf(v)}`; seg = [Math.min(xt, xs), Math.max(xt, xs), yu]; dir = xt < xs ? -1 : 1; }
+        if (v.type === PUMP) { const xl = xv - 42 - 8 * k; d = `M${xs} ${yu} H${xl} V${yv} H${xv - hv}`; seg = [Math.min(xl, xs), Math.max(xl, xs), yu]; dir = xl < xs ? -1 : 1; }
+        else if (!blocked) { const xt = xv + (hv > 20 ? 22 : 0) + 10 * k; d = `M${xs} ${yu} H${xt} V${bottomOf(v)}`; seg = [Math.min(xt, xs), Math.max(xt, xs), yu]; dir = xt < xs ? -1 : 1; }
         else { const xl = xv - hv - 20 - 8 * k; d = `M${xs} ${yu} H${xl} V${yv} H${xv - hv}`; seg = [Math.min(xl, xs), Math.max(xl, xs), yu]; dir = xl < xs ? -1 : 1; }
       } else if (back.has(e.id)) {
         // Επιστροφή μέσα στην προσαγωγή (π.χ. διαχωριστής → αντλία ψύκτη): κλείνει τοπικά, κάτω από τον βρόχο
@@ -1276,7 +1309,8 @@
         const blockedBelow = net.nodes.some(m => isR(m.id) && layer.get(m.id) >= L0 && layer.get(m.id) <= L1 && row.get(m.id) <= rMax + 1);
         const yB = (blockedBelow ? yMax + 36 : Yr(rMax) + 84) + k * 16;
         const yu0 = bottomOf(u), yv0 = bottomOf(v), xa = xu - (hu > 20 ? 22 : 0) - 8 * k, xb = xv - (hv > 20 ? 22 : 0) - 8 * k;
-        d = `M${xa} ${yu0} V${yB} H${xb} V${yv0}`; seg = [Math.min(xa, xb), Math.max(xa, xb), yB]; dir = xb < xa ? -1 : 1;
+        if (v.type === PUMP) { const xl = xv - 42 - 8 * k; d = `M${xa} ${yu0} V${yB} H${xl} V${yv} H${xv - hv}`; seg = [Math.min(xa, xl), Math.max(xa, xl), yB]; dir = xl < xa ? -1 : 1; }
+        else { d = `M${xa} ${yu0} V${yB} H${xb} V${yv0}`; seg = [Math.min(xa, xb), Math.max(xa, xb), yB]; dir = xb < xa ? -1 : 1; }
       } else if (yv === yu) { d = `M${xu} ${yu} H${xv}`; seg = [xu + hu, xv - hv, yu]; }
       else if (inSpan(e.from, yv)) { d = `M${xu} ${yv} H${xv}`; seg = [xu + hu, xv - hv, yv]; }
       else if (inSpan(e.to, yu)) { d = `M${xu} ${yu} H${xv}`; seg = [xu + hu, xv - hv, yu]; }
@@ -1326,6 +1360,24 @@
           : `${sel ? `<circle cx="${x}" cy="${y}" r="12" class="nhalo"/>` : ""}<circle cx="${x}" cy="${y}" r="7" class="njun ${err ? "nerr" : warn ? "nwarn" : ""}"/><circle cx="${x}" cy="${y}" r="14" fill="transparent"/>`;
         body += !(n.label || "").trim() || /^Κόμβος \d+$/.test(nodeLabel(n)) ? `<title>${esc(nodeLabel(n))}</title>` : txt(x, bot + 24, trunc(nodeLabel(n), 16), 'class="t-small" text-anchor="middle"');
         px = x + 12; py = top - 16; vx = x - 20; vy = top - 22;
+      } else if (four.has(n.id)) {
+        const dp = nc && nc.m > 0 ? `ΔP ${fmt(nc.m, 2)} mwc` : "ΔP —", y0 = y - 27, yb = y + rowH, h = rowH + 54;
+        const P = portsOf(res, n);
+        const pm = (px0, py0, list, dir, lbl, anchor) => {
+          const tx = `<text x="${px0 + (anchor === "start" ? 10 : -10)}" y="${py0 < yb ? py0 + 36 : py0 - 8}" text-anchor="${anchor}" class="t-port">${lbl}</text>`;
+          return list.length ? `<circle cx="${px0}" cy="${py0}" r="4.5" class="port-on"><title>${lbl}: ${list.map(x => esc(edgeLabel(x.e))).join(", ")}</title></circle>`
+            : `<g ${interactive ? `data-act="plus-node" data-id="${esc(n.id)}" data-dir="${dir}" role="button" tabindex="0" aria-label="Σύνδεση: ${lbl}"` : ""} class="port-free"><title>Ελεύθερο στόμιο — ${lbl}</title><circle cx="${px0}" cy="${py0}" r="7"/><circle cx="${px0}" cy="${py0}" r="13" class="hit"/>${tx}</g>`;
+        };
+        body = `${sel ? `<rect x="${x - hw - 4}" y="${y0 - 4}" width="${2 * hw + 8}" height="${h + 8}" rx="18" class="nhalo"/>` : ""}
+          <rect x="${x - hw}" y="${y0}" width="${2 * hw}" height="${h}" rx="16" class="nbox ${err ? "nerr" : warn ? "nwarn" : worstNodes.has(n.id) ? "worst" : ""}"/>
+          ${txt(x, y0 + 16, t.short.toUpperCase(), 'class="t-cap" text-anchor="middle"')}
+          ${txt(x, y0 + 31, trunc(nodeLabel(n), 18), 'class="t-strong" text-anchor="middle"')}
+          ${txt(x, y0 + 46, dp, 'class="t-num" text-anchor="middle"')}
+          <line x1="${x}" y1="${y + 26}" x2="${x}" y2="${yb + 18}" class="sepdiv"/>
+          ${txt(x - hw / 2, (y + yb) / 2 + 12, "πρωτεύον", 'class="t-side" text-anchor="middle"')}${txt(x + hw / 2, (y + yb) / 2 + 12, "δευτερεύον", 'class="t-side" text-anchor="middle"')}
+          ${pm(x - hw, y, P.pIn, "in", "από παραγωγή", "start")}${pm(x - hw, yb, P.pOut, "out", "προς παραγωγή", "start")}
+          ${pm(x + hw, y, P.sOut, "out", "προσαγωγή", "end")}${pm(x + hw, yb, P.sIn, "in", "επιστροφή", "end")}`;
+        px = x + hw + 2; py = y0 - 2; vx = x - hw + 12; vy = y0 - 14;
       } else {
         const dp = nc && nc.m > 0 ? `ΔP ${fmt(nc.m, 2)} mwc` : t.dp ? "ΔP —" : "";
         const y0 = top - 27, h = bot - top + 54;
@@ -1415,7 +1467,8 @@
     const g = res.g, gen = zi => zi !== undefined && res.zones[zi] && res.zones[zi].sub.nodes.some(m => GEN_TYPES.includes(m.type));
     const ins = g.inE.get(n.id).map(id => res.ecById.get(id)).filter(Boolean), outs = g.outE.get(n.id).map(id => res.ecById.get(id)).filter(Boolean);
     const anyGen = [...ins, ...outs].some(x => gen(x.zone));
-    const prim = x => anyGen ? gen(x.zone) : false;
+    const z0 = ins.length ? ins[0].zone : outs.length ? outs[0].zone : undefined;
+    const prim = x => anyGen ? gen(x.zone) : x.zone === z0;
     return { pIn: ins.filter(prim), pOut: outs.filter(prim), sIn: ins.filter(x => !prim(x)), sOut: outs.filter(x => !prim(x)) };
   }
   function portsHtml(res, n, buttons) {
