@@ -227,6 +227,87 @@ truthy("Βάνα εξισορρόπησης < 3 kPa → προειδοποίησ
 truthy("v_max ανά διάμετρο: D 26 mm → 1.1 m/s", E.vMaxFor(26.18) === 1.1);
 truthy("R > 300 Pa/m → προειδοποίηση", (() => { E.setProject(E.normalize({ meta: {}, fluid: "water", waterTemp: 45, extras: [], branches: [B("R", null, "t", 2.2, "Φ32", 10)] })); return E.validate(E.calcProject()).warns.some(w => w.includes("Pa/m")); })());
 
+/* =========================== 11. Δίκτυο: ανεξάρτητος έλεγχος =========================== */
+console.log("\n[11] Δίκτυο — έλεγχος με ανεξάρτητο αλγόριθμο (300 τυχαία δίκτυα)");
+let seed = 12345;
+const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+const pick = a => a[Math.floor(rnd() * a.length)];
+const sizes = ["Φ25", "Φ32", "Φ40", "Φ50", "Φ63"];
+let treeOk = 0, treeBad = [];
+for (let n = 0; n < 300; n++) {
+  const N = 1 + Math.floor(rnd() * 9), brs = [];
+  for (let i = 0; i < N; i++) {
+    const parent = i === 0 || rnd() < 0.15 ? null : brs[Math.floor(rnd() * i)].id;
+    brs.push({ id: "n" + i, code: "L" + (i + 1), desc: "", kind: rnd() < 0.5 ? "pe" : "t", parent, Q: "", loadKW: "",
+      pipeFamily: fam, pipeSize: pick(sizes), length: +(1 + rnd() * 40).toFixed(1),
+      fittings: rnd() < 0.6 ? [{ type: "Γωνία 90° (τυπική)", size: "", qty: 1 + Math.floor(rnd() * 6), zeta: 1.2, kv: "" }] : [],
+      equip: rnd() < 0.3 ? [{ label: "FCU", dP: +(5 + rnd() * 30).toFixed(1), unit: "kPa" }] : [] });
+  }
+  const hasKid = new Set(brs.filter(b => b.parent).map(b => b.parent));
+  brs.forEach(b => { if (!hasKid.has(b.id)) b.Q = +(0.3 + rnd() * 3).toFixed(2); });   // Q μόνο στα τέλη
+  const marg = Math.floor(rnd() * 20);
+  E.setProject(E.normalize({ mode: "network", meta: {}, fluid: "water", waterTemp: 45, marginPct: marg, extras: [{ label: "x", dP: 10, unit: "kPa" }], branches: brs }));
+  const rr = E.calcProject();
+  // (α) αυτόματες παροχές: Σ Q των τελών που έχουν αυτόν τον κλάδο πρόγονο
+  const byId = new Map(brs.map(b => [b.id, b]));
+  const ancestors = id => { const out = []; let x = byId.get(id); while (x) { out.push(x.id); x = x.parent ? byId.get(x.parent) : null; } return out; };
+  const leaves = brs.filter(b => !hasKid.has(b.id));
+  const qExp = new Map(brs.map(b => [b.id, 0]));
+  leaves.forEach(l => ancestors(l.id).forEach(a => qExp.set(a, qExp.get(a) + l.Q)));
+  const qOk = brs.every(b => Math.abs(rr.cById.get(b.id).c.Q - qExp.get(b.id)) < 1e-9);
+  // (β) δυσμενέστερη διαδρομή: για κάθε τέλος, ανεβαίνουμε ως την αρχή και αθροίζουμε
+  let worstExp = 0;
+  leaves.forEach(l => { const s = ancestors(l.id).reduce((a, id) => a + rr.cById.get(id).c.dP, 0); worstExp = Math.max(worstExp, s); });
+  const extraM = 10 * 1000 / (rr.fp.rho * 9.81);
+  const hExp = (worstExp + extraM) * (1 + marg / 100);
+  const ok = qOk && Math.abs(rr.sumBranches - worstExp) < 1e-9 && Math.abs(rr.H - hExp) < 1e-9 && rr.circuits.length === leaves.length && !rr.provisional
+    && Math.abs(rr.Qd - brs.filter(b => !b.parent).reduce((a, b) => a + qExp.get(b.id), 0)) < 1e-9;
+  if (ok) treeOk++; else treeBad.push(n);
+  // το σχηματικό σχεδιάζει όλους τους κλάδους
+  const svg = E.schematic(rr, true, 900).svg;
+  if (!brs.every(b => svg.includes(`>${b.code}<`))) treeBad.push("svg" + n);
+}
+truthy(`300/300 δίκτυα: H, δυσμενέστερη, αυτόματο Q, παροχή αντλίας (${treeOk} σωστά)`, treeBad.length === 0, treeBad.slice(0, 5).join(","));
+
+console.log("\n[12] Απλή διαδρομή = ίδια αλυσίδα σε δίκτυο");
+const chain = () => [
+  B("c1", null, "t", 4, "Φ50", 6, { fittings: [{ type: "Γωνία", size: "", qty: 4, zeta: 1.2, kv: "" }] }),
+  B("c2", "c1", "pe", 3, "Φ40", 20), B("c3", "c2", "pe", 1.5, "Φ32", 12, { equip: [{ label: "FCU", dP: 20, unit: "kPa" }] })];
+E.setProject(E.normalize({ mode: "simple", meta: {}, fluid: "water", waterTemp: 45, marginPct: 10, extras: [], branches: chain() }));
+const hSimple = E.calcProject().H;
+E.setProject(E.normalize({ mode: "network", meta: {}, fluid: "water", waterTemp: 45, marginPct: 10, extras: [], branches: chain() }));
+close("Ίδιο H σε απλή και δίκτυο (χειροκίνητα Q)", E.calcProject().H, hSimple, 1e-12);
+// δίκτυο με αυτόματο Q στον κορμό → απλή: τα Q γράφονται, H ίδιο
+const ch2 = chain(); ch2[0].Q = ""; ch2[1].Q = "";
+E.setProject(E.normalize({ mode: "network", meta: {}, fluid: "water", waterTemp: 45, marginPct: 10, extras: [], branches: ch2 }));
+const hAuto = E.calcProject().H;
+close("Δίκτυο αλυσίδα: κορμός παίρνει Q του τέλους (1.5)", E.calcProject().cById.get("c1").c.Q, 1.5, 1e-12);
+truthy("Δίκτυο → απλή επιτρέπεται για αλυσίδα", E.setMode("simple").ok && E.getProject().mode === "simple");
+close("… και το H μένει ίδιο (Q γράφτηκαν ως τιμές)", E.calcProject().H, hAuto, 1e-12);
+close("… Q του c1 γράφτηκε 1.5", +E.getProject().branches[0].Q, 1.5, 1e-12);
+
+console.log("\n[13] Ελλιπείς κλάδοι και αρχή βρόχου");
+E.setProject(E.normalize({ meta: {}, fluid: "water", waterTemp: 45, marginPct: 0, extras: [],
+  branches: [B("A", null, "t", "", "Φ50", 10), B("B", "A", "t", 2, "Φ40", 10), B("C", "A", "t", 2, "Φ20", "", { fittings: [{ type: "Γωνία", size: "", qty: 50, zeta: 1.2, kv: "" }] })] }));
+const ri = E.calcProject();
+truthy("Ελλιπής C (χωρίς μήκος) → εκτός δυσμενέστερης", ri.worst.leaf === "B");
+truthy("… παρότι τα εξαρτήματά του μόνα τους ξεπερνούν", ri.cById.get("C").c.dP > ri.cById.get("B").c.dP);
+truthy("… και ο κορμός A παίρνει Q από B+C (4)", Math.abs(ri.cById.get("A").c.Q - 4) < 1e-12);
+truthy("H σημαίνεται προσωρινό", ri.provisional === true);
+truthy("Διαδρομή ως τον C: ελλιπής, χωρίς στραγγαλισμό", ri.circuits.find(c => c.leaf === "C").complete === false && !isFinite(ri.circuits.find(c => c.leaf === "C").excessKPa));
+E.setProject(E.normalize({ mode: "network", meta: {}, fluid: "water", waterTemp: 45, marginPct: 10, extras: [], start: { type: "Ψύκτης", label: "", dP: 30, unit: "kPa" },
+  branches: [B("A", null, "t", "", "Φ50", 10), B("B", "A", "t", 2, "Φ40", 10), B("C", "A", "t", 2, "Φ40", 30)] }));
+const rs = E.calcProject(), startM = 30 * 1000 / (rs.fp.rho * 9.81);
+close("ΔP αρχής μετράει μία φορά (όχι ανά διαδρομή)", rs.H, (rs.sumBranches + startM) * 1.1, 1e-12);
+truthy("Δίκτυο με διακλάδωση → απλή απορρίπτεται, δεδομένα ίδια", !E.setMode("simple").ok && E.getProject().mode === "network" && E.getProject().branches.length === 3);
+const v2 = E.normalize({ branches: [{ id: "a", code: "L1", kind: "p", parent: null }, { id: "b", code: "L2", kind: "e", parent: "a" }, { id: "c", code: "L3", kind: "pe", parent: "a" }] });
+truthy("Αρχεία v2: «Π»/«Ε» → χωρίς διπλασιασμό, «Π+Ε» μένει", v2.branches[0].kind === "t" && v2.branches[1].kind === "t" && v2.branches[2].kind === "pe");
+truthy("Αρχεία v2 με διακλάδωση → τρόπος δικτύου", v2.mode === "network");
+E.setProject(E.normalize({ mode: "network", meta: {}, fluid: "water", waterTemp: 45, extras: [],
+  branches: [B("P", null, "t", 60, "Φ200", 20), B("K1", "P", "pe", 70, "Φ160", 10), B("K2", "P", "pe", "", "Φ20", "")] }));
+truthy("Κλάδοι μετά ξεπερνούν ήδη το Q (70 > 60) → προειδοποίηση πριν συμπληρωθούν όλοι",
+  E.validate(E.calcProject()).warns.some(w => w.includes("αθροίζουν ήδη")));
+
 /* =========================== Σύνοψη =========================== */
 console.log(`\n========== ${pass} passed, ${fail} failed ==========`);
 process.exit(fail ? 1 : 0);
