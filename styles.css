@@ -327,21 +327,33 @@ details.curve[open] > summary { margin-bottom: 10px; }
 .lg-dir { width: 0; height: 0; border-left: 9px solid #5E6E80; border-top: 5px solid transparent; border-bottom: 5px solid transparent; }
 .lg-box { width: 16px; height: 11px; border-radius: 3px; border: 2px solid var(--text); }
 .lg-box.err { border-color: var(--err); background: var(--err-soft); }
-.pop { width: 320px; }
+.pop { width: min(410px, calc(100% - 8px)); }
 .pop-sub { font-size: 0.78rem; color: var(--muted); padding: 6px 8px 2px; }
-.pop-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 2px 4px 6px; }
-.pop-grid button { min-height: 34px; padding: 6px 8px; font-size: 0.82rem; font-weight: 500; border: 1px solid var(--line); border-radius: 8px; background: #FFFFFF; text-align: left; flex-direction: row; }
+.pop-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 2px 4px 6px; }
+.pop-grid button { min-height: 32px; padding: 5px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; font-size: 0.82rem; font-weight: 500; border: 1px solid var(--line); border-radius: 8px; background: #FFFFFF; text-align: left; flex-direction: row; }
 .pop-grid button:hover { border-color: var(--accent); background: var(--accent-tint); }
-.pop-conn { display: flex; gap: 6px; padding: 2px 4px 6px; }
-.pop-conn select { min-height: 36px; padding: 4px 30px 4px 8px; font-size: 0.86rem; }
-.pop-conn button { width: auto; min-height: 36px; flex-direction: row; padding: 0 12px; color: #FFFFFF; }
-.pop-conn button:hover { background: var(--accent-ink); }
+.pop { max-height: min(560px, 80vh); overflow: auto; }
+.pop-list { display: flex; flex-direction: column; gap: 3px; padding: 2px 4px 6px; }
+.pop-list button { width: 100%; border: 1px solid var(--line); background: #FFFFFF; padding: 6px 10px; }
+.pop-list button.hl { border-color: #B9D3EA; background: var(--accent-tint); }
+.pop-list button:hover { border-color: var(--accent); }
+.pop-list b { font-size: 0.86rem; }
+.brh-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+/* Μήνυμα μετά από διαγραφή / αλλαγή, με αναίρεση (αντί για παράθυρο επιβεβαίωσης) */
+.toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 80; display: flex; align-items: center; gap: 10px;
+  max-width: min(640px, calc(100vw - 24px)); padding: 10px 10px 10px 16px; border-radius: 12px; background: var(--text); color: #FFFFFF;
+  box-shadow: 0 12px 32px rgba(19, 32, 51, 0.3); font-size: 0.88rem; }
+.toast[hidden] { display: none; }
+.toast span { flex: 1; }
+.toast button { width: auto; min-height: 34px; padding: 0 12px; border: 0; background: #FFFFFF; color: var(--text); font-weight: 600; white-space: nowrap; }
+.toast button.icon { background: transparent; color: #B8C4D2; padding: 0 6px; }
+@media (max-width: 980px) { .toast { bottom: 92px; } }
 @media (min-width: 820px) {
   .g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .g-a-net2 { grid-template-columns: 90px minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr); }
 }
 .drawer {
-  position: fixed; top: 0; right: 0; bottom: 0; width: min(520px, 100vw); z-index: 60; background: var(--bg);
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(600px, 100vw); z-index: 60; background: var(--bg);
   border-left: 1px solid var(--line); box-shadow: -12px 0 32px rgba(19, 32, 51, 0.18); display: flex; flex-direction: column;
 }
 .drawer[hidden] { display: none; }
@@ -355,7 +367,25 @@ details.curve[open] > summary { margin-bottom: 10px; }
 .dr-b .grid.g3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .dr-b .g-a-net2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .dr-b .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.dr-b .table.fit { min-width: 560px; }
+/* Εξαρτήματα στο πλαίσιο: κάθε γραμμή γίνεται κάρτα ώστε να χωρούν όλα τα πεδία */
+.dr-b .table.fit { min-width: 0; }
+.dr-b .table.fit thead { display: none; }
+.dr-b .table.fit tbody { display: block; }
+.dr-b .table.fit tr { display: grid; grid-template-columns: minmax(0, 1.5fr) 64px 72px 72px minmax(70px, 1fr); grid-template-areas: "type type type type del" "size qty z kv out";
+  gap: 6px 8px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.dr-b .table.fit td { display: block; padding: 0; border: 0; width: auto; min-width: 0; }
+.dr-b .table.fit td[data-l]::before { content: attr(data-l); display: block; font-size: 0.72rem; color: var(--muted); margin-bottom: 2px; font-family: var(--font); font-weight: 500; }
+.dr-b .table.fit .c-type { grid-area: type; }
+.dr-b .table.fit .c-size { grid-area: size; }
+.dr-b .table.fit .c-qty { grid-area: qty; }
+.dr-b .table.fit .c-z { grid-area: z; }
+.dr-b .table.fit .c-kv { grid-area: kv; }
+.dr-b .table.fit td.out { grid-area: out; text-align: right; align-self: end; padding-bottom: 10px; }
+.dr-b .table.fit td.meth { display: none; }
+.dr-b .table.fit .c-del { grid-area: del; justify-self: end; }
+.table.fit input.n { padding-left: 6px; padding-right: 6px; -moz-appearance: textfield; }
+.table.fit input.n:focus { padding-left: 5px; padding-right: 5px; }
+.table.fit input.n::-webkit-inner-spin-button, .table.fit input.n::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .dr-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: space-between; margin-top: 4px; }
 .conn2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 0.84rem; }
 .conn2 h4 { margin: 0 0 4px; font-size: 0.74rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted-2); }
@@ -365,8 +395,12 @@ details.curve[open] > summary { margin-bottom: 10px; }
 body.net-full { overflow: hidden; }
 body.net-full #c-net { position: fixed; inset: 10px; z-index: 50; overflow: auto; box-shadow: var(--shadow-lg); }
 body.net-full #c-net .schem-wrap { max-height: none; height: calc(100vh - 250px); }
-body.net-full.drawer-open #c-net { right: min(530px, 100vw); }
+body.net-full.drawer-open #c-net { right: min(610px, 100vw); }
 @media (max-width: 700px) {
   .drawer { top: auto; height: 86vh; width: 100vw; border-left: 0; border-top: 1px solid var(--line); border-radius: 16px 16px 0 0; }
   body.net-full.drawer-open #c-net { right: 10px; }
+}
+@media (max-width: 600px) {
+  .pop-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dr-b .table.fit tr { grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-areas: "type type type del" "size size size size" "qty z kv out"; }
 }

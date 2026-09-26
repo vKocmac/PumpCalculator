@@ -366,6 +366,56 @@ console.log("\n[13] Μετατροπές απλή ↔ δίκτυο (ίδιο H)"
   truthy("Κενό έργο → δίκτυο: μόνο η αντλία", (() => { E.setProject(E.normalize({ mode: "simple", meta: {}, branches: [], extras: [] })); E.setMode("network"); const n2 = E.getProject().net; return n2.nodes.length === 1 && n2.nodes[0].type === "pump" && !n2.edges.length; })());
 }
 
+/* =========================== 15. Επεξεργασία δικτύου =========================== */
+console.log("\n[15] Παρεμβολή, διαγραφή ενδιάμεσου, αναίρεση");
+{
+  const base = () => ({ mode: "network", meta: {}, fluid: "water", waterTemp: 45, marginPct: 0, extras: [], branches: [],
+    net: { nodes: [Nd("P", "pump"), Nd("A", "chiller", { dP: 30 }), Nd("F", "fcu", { dP: 20, Q: 2 })],
+      edges: [Pp("a", "P", "A", "Φ40", 10, { fittings: [{ type: "Γωνία", size: "", qty: 2, zeta: 1.2, kv: "" }] }), Pp("b", "A", "F", "Φ40", 6), Pp("c", "F", "P", "Φ32", 12)] } });
+  E.setProject(E.normalize(base()));
+  const h0 = E.calcProject().H;
+  // Παρεμβολή κόμβου στον a, μετά μοίρασμα του μήκους 10 → 4 + 6: ίδιο H
+  E.insertOnEdge("a", "junction");
+  let pr = E.getProject(), a = pr.net.edges.find(e => e.id === "a"), a2 = pr.net.edges[pr.net.edges.indexOf(a) + 1];
+  truthy("Παρεμβολή: 4 σημεία, 4 σωλήνες, a → νέο → A", pr.net.nodes.length === 4 && pr.net.edges.length === 4 && a2.from === a.to && a2.to === "A" && a2.pipeSize === "Φ40" && a2.length === "");
+  truthy("… ο νέος σωλήνας χωρίς μήκος → H προσωρινό", E.calcProject().provisional === true);
+  a.length = 4; a2.length = 6;
+  close("… μήκος 4 + 6 = 10 → ίδιο H", E.calcProject().H, h0, 1e-12);
+  // Διαγραφή του ενδιάμεσου κόμβου → οι δύο σωλήνες ενώνονται, ίδιο H
+  E.delNode(a.to);
+  pr = E.getProject();
+  truthy("Διαγραφή κόμβου: 3 σωλήνες, ο a ξανά P → A με L 10 και τα εξαρτήματά του", pr.net.edges.length === 3 && pr.net.edges.find(e => e.id === "a").to === "A" && +pr.net.edges.find(e => e.id === "a").length === 10 && pr.net.edges.find(e => e.id === "a").fittings.length === 1);
+  close("… ίδιο H", E.calcProject().H, h0, 1e-12);
+  // Διαγραφή εξοπλισμού ανάμεσα σε ίδιους σωλήνες (ψύκτης Φ40/Φ40) → ένας σωλήνας 16 m, H − 30 kPa
+  const fp = E.fluidProps();
+  E.delNode("A");
+  pr = E.getProject();
+  truthy("Διαγραφή ψύκτη: a (Φ40) + b (Φ40) → ένας σωλήνας 16 m", pr.net.edges.length === 2 && +pr.net.edges.find(e => e.id === "a").length === 16 && pr.net.edges.find(e => e.id === "a").to === "F");
+  close("… H μειώνεται ακριβώς κατά τα 30 kPa του ψύκτη", E.calcProject().H, h0 - E.toM(30, "kPa", fp), 1e-9);
+  // Αναίρεση ×3 → αρχικό δίκτυο
+  E.undo(); E.undo(); E.undo();
+  pr = E.getProject();
+  truthy("Αναίρεση ×3 → αρχικό δίκτυο", pr.net.nodes.length === 3 && pr.net.edges.length === 3 && pr.net.edges.find(e => e.id === "a").to === "A");
+  close("… αρχικό H", E.calcProject().H, h0, 1e-12);
+  // Διαγραφή εξοπλισμού ανάμεσα σε διαφορετικούς σωλήνες (FCU Φ40 / Φ32) → μένει κόμβος, σωλήνες ίδιοι
+  E.delNode("F");
+  pr = E.getProject();
+  truthy("Διαγραφή FCU ανάμεσα σε Φ40 και Φ32 → γίνεται κόμβος, οι 2 σωλήνες μένουν", pr.net.nodes.find(n => n.id === "F").type === "junction" && pr.net.edges.length === 3);
+  truthy("… το κύκλωμα μένει κλειστό", !E.validate(E.calcProject()).errors.length);
+  close("… H μειώνεται ακριβώς κατά τα 20 kPa του FCU", E.calcProject().H, h0 - E.toM(20, "kPa", fp), 1e-9);
+  E.undo();
+  pr = E.getProject();
+  // Διαγραφή σωλήνα → τα υπόλοιπα μένουν· σύνδεση ξανά από το + → ίδιο H (με ίδια στοιχεία)
+  const b = JSON.parse(JSON.stringify(pr.net.edges.find(e => e.id === "b")));
+  E.delEdge("b");
+  truthy("Διαγραφή σωλήνα b → ο FCU δεν τροφοδοτείται (σφάλμα, όχι κατάρρευση)", E.validate(E.calcProject()).errors.some(x => x.includes("τροφοδοτείται")));
+  E.netAdd("A", null, "F");
+  const nb = E.getProject().net.edges[E.getProject().net.edges.length - 1];
+  Object.assign(nb, { pipeFamily: b.pipeFamily, pipeSize: b.pipeSize, length: b.length, kind: b.kind });
+  truthy("… σύνδεση A → F από το +", nb.from === "A" && nb.to === "F");
+  close("… ίδιο H", E.calcProject().H, h0, 1e-12);
+}
+
 /* =========================== 14. Έκδοση =========================== */
 console.log("\n[14] Ίδια έκδοση παντού (αλλιώς ο browser κρατά παλιά αρχεία)");
 const ver = fs.readFileSync(path.join(dir, "version.txt"), "utf8").trim();
