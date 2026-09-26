@@ -445,7 +445,10 @@ console.log("\n[16] Πολλές αντλίες: διαχωριστής, αντ�
   close("Δοχείο στον διαχωριστή: αναρρόφηση P1 = −ΔP(c)", r.press.pump.get("P1").pin, -dp("c"), 1e-12);
   close("… αναρρόφηση P2 = −(ΔP d + max ΔP e1, e2)", r.press.pump.get("P2").pin, -(dp("d") + Math.max(dp("e1"), dp("e2"))), 1e-12);
   close("… κατάθλιψη P1 = αναρρόφηση + H", r.press.pump.get("P1").pout, -dp("c") + C("P1").base, 1e-12);
-  truthy("… παρατήρηση για αναρρόφηση κάτω από την πλήρωση", E.validate(r).warns.some(x => x.includes("αναρρόφηση") && x.includes("P1")));
+  truthy("… αναρρόφηση λίγα kPa κάτω από την πλήρωση → χωρίς παρατήρηση (όριο 20 kPa)", !E.validate(r).warns.some(x => x.includes("αναρρόφηση")));
+  global.window.DB.DEFAULTS.suctionWarnKPa = 0.1;
+  truthy("… με όριο 0.1 kPa → παρατήρηση για την P1", E.validate(r).warns.some(x => x.includes("αναρρόφηση") && x.includes("P1")));
+  global.window.DB.DEFAULTS.suctionWarnKPa = 20;
   E.getProject().net.nodes.find(n => n.id === "SEP").vessel = false;
   E.getProject().net.nodes.find(n => n.id === "P1").vessel = true;
   r = E.calcProject();
@@ -473,6 +476,41 @@ console.log("\n[16] Πολλές αντλίες: διαχωριστής, αντ�
   E.setProject(E.normalize(base({ net: { nodes: [Nd("P1", "pump", { Q: 2 }), Nd("P2", "pump"), Nd("A", "fcu")],
     edges: [Pp("x", "P1", "P2", "Φ32", 5), Pp("y", "P2", "A", "Φ32", 5), Pp("z", "A", "P1", "Φ32", 5)] } })));
   truthy("Αντλίες σε σειρά → σφάλμα", E.validate(E.calcProject()).errors.some(x => x.includes("σε σειρά")));
+  // Buffer και διαχωριστής στη σειρά (1 είσοδος / 1 έξοδος) = απλός εξοπλισμός, όχι ζώνη χωρίς αντλία
+  E.setProject(E.normalize(base({ net: { nodes: [Nd("P", "pump"), Nd("B", "buffer", { dP: 2 }), Nd("S", "sep", { dP: 1 }), Nd("F", "fcu", { Q: 3, dP: 10 })],
+    edges: [Pp("a", "P", "F", "Φ40", 10), Pp("b", "F", "B", "Φ40", 10), Pp("c", "B", "S", "Φ40", 3), Pp("d", "S", "P", "Φ40", 3)] } })));
+  r = E.calcProject();
+  truthy("Buffer → διαχωριστής στη σειρά: μία ζώνη, χωρίς σφάλματα", r.zones.length === 1 && !E.validate(r).errors.length);
+  close("… H = όλοι οι σωλήνες + FCU + buffer + διαχωριστής", r.H, ["a", "b", "c", "d"].reduce((x, k) => x + r.ecById.get(k).c.dP, 0) + kPa(10) + kPa(2) + kPa(1), 1e-12);
+  // Όπως στο σχέδιο του χρήστη: συλλέκτης με αντλία σε κάθε αναχώρηση, υποσυλλέκτης, κοινή επιστροφή → buffer → διαχωριστής, πρωτεύον με ψύκτη
+  {
+    const n2 = [Nd("S1", "header", { dP: 5 }), Nd("A2", "pump"), Nd("A3", "pump"), Nd("S2", "header", { dP: 5 }), Nd("T1", "coil", { Q: 3, dP: 30 }), Nd("T2", "fcu", { Q: 2, dP: 25 }),
+      Nd("T3", "coil", { Q: 4, dP: 35 }), Nd("J", "junction"), Nd("BUF", "buffer", { dP: 2 }), Nd("SEP", "sep", { dP: 1 }), Nd("A5", "pump", { Q: 10 }), Nd("CH", "chiller", { dP: 40 })];
+    const e2 = [Pp("l1", "SEP", "S1", "Φ63", 5), Pp("l2", "S1", "A2", "Φ50", 2), Pp("l3", "S1", "A3", "Φ40", 2), Pp("l5", "A2", "S2", "Φ50", 10), Pp("l6", "S2", "T1", "Φ40", 20), Pp("l7", "S2", "T2", "Φ32", 15),
+      Pp("l8", "T1", "J", "Φ40", 20), Pp("l9", "T2", "J", "Φ32", 15), Pp("l12", "A3", "T3", "Φ40", 30), Pp("l14", "T3", "J", "Φ40", 30), Pp("l10", "J", "BUF", "Φ63", 10), Pp("l11", "BUF", "SEP", "Φ63", 3),
+      Pp("l16", "SEP", "A5", "Φ63", 3), Pp("l17", "A5", "CH", "Φ63", 5), Pp("l18", "CH", "SEP", "Φ63", 5)];
+    E.setProject(E.normalize(base({ net: { nodes: n2, edges: e2 } })));
+    r = E.calcProject();
+    const d = k => r.ecById.get(k).c.dP, com = d("l10") + kPa(2) + d("l11") + kPa(1) + d("l1") + kPa(5);
+    truthy("Σχέδιο χρήστη: 2 ζώνες, χωρίς σφάλματα", r.zones.filter(z => z.pumps.length).length === 2 && !E.validate(r).errors.length, JSON.stringify(E.validate(r).errors));
+    close("… H A2 = l5 + Σ2 + max(κλάδοι Σ2) + κοινά + l2", r.circuits.find(c => c.pumpId === "A2").H, d("l5") + kPa(5) + Math.max(d("l6") + kPa(30) + d("l8"), d("l7") + kPa(25) + d("l9")) + com + d("l2"), 1e-12);
+    close("… H A3 = l12 + T3 + l14 + κοινά + l3", r.circuits.find(c => c.pumpId === "A3").H, d("l12") + kPa(35) + d("l14") + com + d("l3"), 1e-12);
+    close("… H A5 (πρωτεύον) = l17 + ψύκτης + l18 + διαχ. + l16", r.circuits.find(c => c.pumpId === "A5").H, d("l17") + kPa(40) + d("l18") + kPa(1) + d("l16"), 1e-12);
+    truthy("… παροχές: l1 = l10 = 9, l2 = 5", [["l1", 9], ["l10", 9], ["l2", 5]].every(([k, q]) => Math.abs(r.ecById.get(k).c.Q - q) < 1e-12));
+    // Χωρίς διαχωριστή ανάμεσα: αντλία πριν από τον συλλέκτη με τις αντλίες → σειρά
+    const n3 = n2.filter(n => n.id !== "SEP").concat([Nd("A1", "pump")]);
+    const e3 = e2.filter(e => !["l1", "l11", "l16", "l18"].includes(e.id)).concat([Pp("m1", "A1", "S1", "Φ63", 5), Pp("m2", "BUF", "A5", "Φ63", 3), Pp("m3", "CH", "A1", "Φ63", 5)]);
+    E.setProject(E.normalize(base({ net: { nodes: n3, edges: e3 } })));
+    truthy("Αντλία πριν από συλλέκτη με αντλίες, χωρίς διαχωριστή → «σε σειρά»", E.validate(E.calcProject()).errors.some(x => x.includes("A1") && x.includes("σε σειρά")));
+  }
+  // Το ενσωματωμένο παράδειγμα: χωρίς σφάλματα και παρατηρήσεις, 4 αντλίες, authority ≥ 0.5 με τη μονάδα στον παρονομαστή
+  E.setProject(E.normalize(JSON.parse(JSON.stringify(global.window.DB.EXAMPLE))));
+  r = E.calcProject();
+  const vx = E.validate(r);
+  truthy("Παράδειγμα: 4 αντλίες, 0 σφάλματα, 0 παρατηρήσεις", r.circuits.length === 4 && !vx.errors.length && !vx.warns.length, JSON.stringify(vx));
+  const l6 = r.ecById.get("e9").c, k1 = r.ncById.get("k1").m, l7 = r.ecById.get("e10").c.dP;
+  close("… authority L6 = ΔPβάνας / (L6 + ΚΚΜ-1 + L7)", l6.ctrl.auth, l6.ctrl.dPv / (l6.dP + k1 + l7), 1e-12);
+  truthy("… παροχή πρωτεύοντος (ψύκτης 250 kW) > δευτερεύοντος (235 kW)", r.ecById.get("e1").c.Q > r.ecById.get("e4").c.Q);
   // Μία αντλία: τίποτα δεν αλλάζει (ίδιο αποτέλεσμα με πριν) — καλύπτεται από [11] (300 τυχαία δίκτυα)
 }
 
