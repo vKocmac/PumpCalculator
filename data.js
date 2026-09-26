@@ -274,6 +274,29 @@ window.DB = (function () {
     { id: "pe", tag: "×2", label: "μίας διαδρομής → ×2 (προσαγωγή + επιστροφή)", double: true },
     { id: "t", tag: "Σύν.", label: "συνολικό", double: false }
   ];
+  // Εξοπλισμός / σημεία του δικτύου (τρόπος «Δίκτυο»).
+  //   dp: έχει δική του πτώση πίεσης (από φύλλο κατασκευαστή, στην παροχή σχεδιασμού)
+  //   terminal: τερματική μονάδα — ονομάζει τη διαδρομή στους πίνακες
+  //   decoupler: κόβει το κύκλωμα (buffer, διαχωριστής, ανοιχτή δεξαμενή)
+  const NODE_TYPES = [
+    { id: "pump", label: "Αντλία", short: "Αντλία", dp: false },
+    { id: "junction", label: "Κόμβος (διακλάδωση / ένωση)", short: "Κόμβος", dp: false },
+    { id: "chiller", label: "Ψύκτης", short: "Ψύκτης", dp: true },
+    { id: "boiler", label: "Λέβητας", short: "Λέβητας", dp: true },
+    { id: "hp", label: "Αντλία θερμότητας", short: "ΑΘ", dp: true },
+    { id: "hx", label: "Εναλλάκτης", short: "Εναλλάκτης", dp: true },
+    { id: "header", label: "Συλλέκτης", short: "Συλλέκτης", dp: true },
+    { id: "buffer", label: "Buffer", short: "Buffer", dp: true, decoupler: true },
+    { id: "sep", label: "Υδραυλικός διαχωριστής", short: "Διαχωριστής", dp: true, decoupler: true },
+    { id: "tank", label: "Δεξαμενή", short: "Δεξαμενή", dp: true, decoupler: true },
+    { id: "fcu", label: "FCU / τερματική μονάδα", short: "FCU", dp: true, terminal: true },
+    { id: "coil", label: "Στοιχείο ΚΚΜ", short: "Στοιχείο", dp: true, terminal: true },
+    { id: "ufh", label: "Κύκλωμα ενδοδαπέδιας", short: "Ενδοδαπέδια", dp: true, terminal: true },
+    { id: "rad", label: "Θερμαντικό σώμα", short: "Σώμα", dp: true, terminal: true },
+    { id: "device", label: "Όργανο / βάνα με ΔP", short: "Όργανο", dp: true },
+    { id: "other", label: "Άλλο", short: "Εξοπλισμός", dp: true }
+  ];
+
   // Τι είναι η αρχή του βρόχου (μόνο για την ετικέτα· η ΔP της δίνεται χωριστά)
   const START_TYPES = ["Αντλία", "Συλλέκτης", "Ψύκτης", "Λέβητας", "Αντλία θερμότητας", "Εναλλάκτης",
     "Buffer", "Υδραυλικός διαχωριστής", "Δεξαμενή", "Άλλο"];
@@ -312,7 +335,9 @@ window.DB = (function () {
   const THEORY = [
     ["Μανομετρικό", "H = (ΔP_δυσμ. διαδρομής + ΔP_αρχής + Σ ΔP_κοινού εξοπλ.)·(1+προσαύξηση) + H_στατ", "m",
       "Δυσμενέστερη διαδρομή = από την αρχή του βρόχου ως ένα τέλος, με τη μεγαλύτερη ΔP· μόνο πλήρεις διαδρομές"],
-    ["Παροχή κλάδου (δίκτυο)", "Q = Σ Q των κλάδων που ξεκινούν από το τέλος του", "m³/h", "Όταν δεν δίνεται Q ή φορτίο"],
+    ["Δίκτυο (κλειστό κύκλωμα)", "H = max over διαδρομών αντλία→…→αντλία (Σ ΔP σωλήνων + Σ ΔP εξοπλισμού)", "m",
+      "Μόνο πλήρεις διαδρομές· οι υπόλοιπες στραγγαλίζονται στην ίδια ΔP"],
+    ["Ισοζύγιο παροχών", "Σ Q που μπαίνει = Σ Q που βγαίνει, σε κάθε σημείο", "m³/h", "Όσες παροχές δεν δίνονται βγαίνουν από το ισοζύγιο"],
     ["Μετατροπή", "ΔP[kPa] = ρ·g·H/1000", "kPa", "m = στήλη του ρευστού που κυκλοφορεί"],
     ["Κινηματικό ιξώδες ν", "ν_νερού = 1e-6·exp(0.5842 − 0.030263·T + 0.0001295·T²)", "m²/s",
       "Γλυκόλη: ν = ν_νερού·λόγος(T, %) από πίνακα"],
@@ -331,5 +356,5 @@ window.DB = (function () {
     ["Υδραυλική ισχύς", "P = ρ·g·(Q/3600)·H", "W", "Ισχύς άξονα = P/η"]
   ];
 
-  return { PIPE_FAMILIES, FITTINGS, GLYCOL_GRID, GLYCOL, FLUIDS, KINDS, START_TYPES, DEFAULTS, THEORY, VERSION: "2.2.0" };
+  return { PIPE_FAMILIES, FITTINGS, GLYCOL_GRID, GLYCOL, FLUIDS, KINDS, START_TYPES, NODE_TYPES, DEFAULTS, THEORY, VERSION: "2.3.0" };
 })();
