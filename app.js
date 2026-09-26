@@ -870,8 +870,8 @@
     .schem .delb:hover circle,.schem .delb:focus-visible circle{fill:#B42318}
     .schem .delb:hover path,.schem .delb:focus-visible path{stroke:#FFFFFF}
   </style>`;
-  function plusBtn(x, y, id, label) {
-    return `<g class="plus" data-act="plus" data-id="${esc(id)}" data-x="${x}" data-y="${y}" role="button" tabindex="0" aria-label="${esc(label)}"><circle cx="${x}" cy="${y}" r="11"/><path d="M${x - 5} ${y}h10M${x} ${y - 5}v10"/></g>`;
+  function plusBtn(x, y, id, label, act = "plus") {
+    return `<g class="plus" data-act="${act}" data-id="${esc(id)}" data-x="${x}" data-y="${y}" role="button" tabindex="0" aria-label="${esc(label)}"><circle cx="${x}" cy="${y}" r="11"/><path d="M${x - 5} ${y}h10M${x} ${y - 5}v10"/></g>`;
   }
 
   /* ---------------- ΔΙΚΤΥΟ: σχέδιο ---------------- */
@@ -890,7 +890,10 @@
     .schem .arr.w{fill:#0B6FB8}
     .schem .t-open{font-size:10px;font-weight:600;fill:#8A3B00}
   </style>`;
-  let netAnchors = new Map();
+  let netAnchors = new Map(), edgeAnchors = new Map();
+  /* Τελευταία θέση κάθε σημείου στο σχέδιο: αν κοπεί ένας σωλήνας, ό,τι μένει
+     ασύνδετο κρατά τη θέση του (δεν πετάγεται κάτω) ώστε να το ξαναενώσεις. */
+  const lastPos = new Map();
   function nodeHalf(n) { return n.type === PUMP ? 20 : n.type === "junction" ? 7 : 68; }
   function layoutNet(res) {
     const g = res.g, P = res.pumpId, net = project.net;
@@ -904,6 +907,7 @@
       if (layer.has(v)) return;
       let L = -1;
       g.inE.get(v).forEach(id => { const u = g.eById.get(id).from; if (layer.has(u)) L = Math.max(L, layer.get(u)); });
+      if (L < 0 && lastPos.has(v)) L = lastPos.get(v).L - 1;
       layer.set(v, L + 1);
     });
     net.nodes.forEach(n => { if (!layer.has(n.id)) layer.set(n.id, 0); });
@@ -921,9 +925,19 @@
         visit(v);
       });
     };
-    seeds.concat(net.nodes.map(n => n.id)).forEach(s => { if (!row.has(s)) { let r = nextRow++; while (!free(layer.get(s), r)) r = nextRow++; put(s, r); visit(s); } });
-    let maxL = 0; layer.forEach(L => { maxL = Math.max(maxL, L); });
-    return { layer, row, rows: Math.max(nextRow, 1), maxL };
+    seeds.forEach(s => { if (!row.has(s)) { let r = nextRow++; while (!free(layer.get(s), r)) r = nextRow++; put(s, r); visit(s); } });
+    net.nodes.forEach(n => {
+      const s = n.id; if (row.has(s)) return;
+      const lp = lastPos.get(s);
+      let r = lp && free(layer.get(s), lp.r) ? lp.r : nextRow++;
+      while (!free(layer.get(s), r)) r = nextRow++;
+      put(s, r); visit(s);
+    });
+    let maxL = 0, maxR = 0;
+    layer.forEach(L => { maxL = Math.max(maxL, L); });
+    row.forEach(r => { maxR = Math.max(maxR, r); });
+    layer.forEach((L, id) => { if (row.has(id)) lastPos.set(id, { L, r: row.get(id) }); });
+    return { layer, row, rows: Math.max(nextRow, maxR + 1, 1), maxL };
   }
   function schematicNet(res, interactive, availW) {
     const g = res.g, P = res.pumpId, net = project.net;
@@ -939,7 +953,7 @@
     const worstNodes = new Set(res.worst && res.worst.complete ? res.worst.nodes : []);
     const L = [], N = [], PL = [];
     const txt = (x, y, s, a = "") => `<text x="${x}" y="${y}" ${a}>${esc(s)}</text>`;
-    netAnchors = new Map();
+    netAnchors = new Map(); edgeAnchors = new Map();
     let ci = 0;
     net.edges.forEach(e => {
       const x = res.ecById.get(e.id), c = x.c;
@@ -968,12 +982,14 @@
       if (!e.direct || !c.complete) {
         labels += `<text x="${mx}" y="${sy - 10}" text-anchor="middle" class="t-code">${esc(code)}${desc ? `<tspan class="t-desc" dx="5">${esc(trunc(desc, chars - code.length - 1))}</tspan>` : ""}</text>`;
         labels += c.complete
-          ? `<text x="${mx}" y="${sy + 18}" text-anchor="middle" class="t-num">${esc(e.direct ? "" : "ΔP " + fmt(c.dP) + " m")}</text><text x="${mx}" y="${sy + 31}" text-anchor="middle" class="t-q">Q ${fmt(c.Q, 2)} m³/h</text>`
+          ? `<text x="${mx}" y="${sy + 18}" text-anchor="middle" class="t-num">${esc(e.direct ? "" : "ΔP " + fmt(c.dP) + " mwc")}</text><text x="${mx}" y="${sy + 31}" text-anchor="middle" class="t-q">Q ${fmt(c.Q, 2)} m³/h</text>`
           : `<text x="${mx}" y="${sy + 18}" text-anchor="middle" class="t-miss">${esc(trunc("λείπει: " + c.missing.join(", "), chars))}</text>${c.Q > 0 ? `<text x="${mx}" y="${sy + 31}" text-anchor="middle" class="t-q">Q ${fmt(c.Q, 2)} m³/h</text>` : ""}`;
       } else if (c.Q > 0) labels += `<text x="${mx}" y="${sy + 16}" text-anchor="middle" class="t-q">${fmt(c.Q, 2)} m³/h</text>`;
       L.push(`<g class="seg ${sel ? "sel" : ""}" ${interactive ? `data-act="pick" data-id="${esc(e.id)}" role="button" tabindex="0" aria-label="Σωλήνας ${esc(code)}"` : ""}>
         ${sel ? `<path d="${d}" class="ln-halo"/>` : ""}<path d="${d}" class="${cls}"/>${interactive ? `<path d="${d}" class="ln-hit"/>` : ""}
         <path d="${arrow}" class="arr ${onWorst.has(e.id) ? "w" : ""}"/>${labels}</g>`);
+      edgeAnchors.set(e.id, { x: s2 - 38, y: sy + 22, hw: 11 });
+      if (sel) PL.push(plusBtn(s2 - 38, sy + 22, e.id, `Παρεμβολή σημείου ή εξοπλισμού στον ${code}`, "plus-edge"));
       if (sel) PL.push(`<g class="delb" data-act="del" data-id="${esc(e.id)}" role="button" tabindex="0" aria-label="Διαγραφή ${esc(code)}"><title>Διαγραφή ${esc(code)}</title><circle cx="${s2 - 12}" cy="${sy + 22}" r="9"/><path d="M${s2 - 15.5} ${sy + 18.5}l7 7M${s2 - 8.5} ${sy + 18.5}l-7 7"/></g>`);
     });
     net.nodes.forEach(n => {
@@ -990,7 +1006,7 @@
         body = `${sel ? `<circle cx="${x}" cy="${y}" r="12" class="nhalo"/>` : ""}<circle cx="${x}" cy="${y}" r="7" class="njun ${err ? "nerr" : ""}"/><circle cx="${x}" cy="${y}" r="14" fill="transparent"/>
           ${/^Κόμβος \d+$/.test(nodeLabel(n)) ? `<title>${esc(nodeLabel(n))}</title>` : txt(x, y + 24, trunc(nodeLabel(n), 16), 'class="t-small" text-anchor="middle"')}`;
       } else {
-        const dp = nc && nc.m > 0 ? `ΔP ${fmt(nc.m, 2)} m` : t.dp ? "ΔP —" : "";
+        const dp = nc && nc.m > 0 ? `ΔP ${fmt(nc.m, 2)} mwc` : t.dp ? "ΔP —" : "";
         body = `${sel ? `<rect x="${x - hw - 4}" y="${y - 31}" width="${2 * hw + 8}" height="62" rx="12" class="nhalo"/>` : ""}
           <rect x="${x - hw}" y="${y - 27}" width="${2 * hw}" height="54" rx="9" class="nbox ${err ? "nerr" : warn ? "nwarn" : worstNodes.has(n.id) ? "worst" : ""}"/>
           ${txt(x, y - 11, t.short.toUpperCase(), 'class="t-cap" text-anchor="middle"')}
@@ -1046,28 +1062,42 @@
       return `<tr class="${pt.worst && pt.complete ? "worst" : ""} ${pt.complete ? "" : "inc"}">
         <td>${esc(res.via(pt) || "—")}${pt.toPump ? "" : " <small class='muted'>→ ανοιχτό άκρο</small>"}</td>
         <td class="mono sum">${parts(pt)}</td>
-        <td class="r mono"><b>${pt.complete ? fmt(pt.dP) + " m" : "—"}</b></td><td>${outc}</td></tr>`;
+        <td class="r mono"><b>${pt.complete ? fmt(pt.dP) + " mwc" : "—"}</b></td><td>${outc}</td></tr>`;
     }).join("");
-    const suc = res.suction ? `<p class="desc">Αναρρόφηση (πηγή → αντλία): <b class="num">${fmt(res.suction.dP)} m</b> — προστίθεται στη δυσμενέστερη.</p>` : "";
-    return `<div class="tablewrap"><table class="table paths"><thead><tr><th>Μέσω</th><th>Άθροισμα [m]</th><th class="r">ΔP</th><th>Αποτέλεσμα</th></tr></thead><tbody>${rows}</tbody></table></div>${suc}`;
+    const suc = res.suction ? `<p class="desc">Αναρρόφηση (πηγή → αντλία): <b class="num">${fmt(res.suction.dP)} mwc</b> — προστίθεται στη δυσμενέστερη.</p>` : "";
+    return `<div class="tablewrap"><table class="table paths"><thead><tr><th>Μέσω</th><th>Άθροισμα [mwc]</th><th class="r">ΔP</th><th>Αποτέλεσμα</th></tr></thead><tbody>${rows}</tbody></table></div>${suc}`;
   }
 
   function renderNetPop(res) {
     const el = $("#pop"); if (!el) return;
-    const n = pop && project.net.nodes.find(x => x.id === pop.id);
-    if (!n) { el.hidden = true; el.innerHTML = ""; return; }
-    const hasPump = project.net.nodes.some(x => x.type === PUMP);
+    const net = project.net;
+    const e = pop && pop.edge && net.edges.find(x => x.id === pop.id);
+    const n = pop && !pop.edge && net.nodes.find(x => x.id === pop.id);
+    if (!n && !e) { el.hidden = true; el.innerHTML = ""; return; }
+    const hasPump = net.nodes.some(x => x.type === PUMP);
     const types = DB.NODE_TYPES.filter(t => t.id !== PUMP || !hasPump);
-    const others = project.net.nodes.filter(x => x.id !== n.id);
-    others.sort((a, b) => (b.type === PUMP) - (a.type === PUMP));
-    el.innerHTML = `<div class="pop-h">Από: ${esc(nodeLabel(n))}</div>
-      <div class="pop-sub">Νέος σωλήνας προς νέο:</div>
-      <div class="pop-grid">${types.map(t => `<button data-act="add-to" data-from="${esc(n.id)}" data-type="${t.id}">${esc(t.short === "Κόμβος" ? "Κόμβος / ταφ" : t.label)}</button>`).join("")}</div>
-      ${others.length ? `<div class="pop-sub">ή σωλήνας προς υπάρχον σημείο${project.openCircuit ? "" : " (έτσι κλείνει το κύκλωμα)"}:</div>
-      <div class="pop-conn"><select id="connTo" aria-label="Σημείο">${others.map(o => `<option value="${esc(o.id)}">${esc(nodeLabel(o))}${o.type === PUMP ? " — επιστροφή στην αντλία" : ""}</option>`).join("")}</select>
-        <button class="primary small" data-act="connect" data-from="${esc(n.id)}">Σύνδεση</button></div>` : ""}`;
-    const wrap = $("#schemWrap"), outer = $("#schemOuter"), a = netAnchors.get(n.id) || { x: 0, y: 0, hw: 0 };
-    const sx = wrap ? wrap.scrollLeft : 0, sy = wrap ? wrap.scrollTop : 0, ow = outer ? outer.clientWidth : 1000, pw = 320;
+    const SHORT = { junction: "Κόμβος / ταφ", hp: "Αντλία θερμ.", sep: "Διαχωριστής", fcu: "FCU", coil: "Στοιχείο ΚΚΜ", ufh: "Ενδοδαπέδια", rad: "Θερμ. σώμα", device: "Όργανο / βάνα", other: "Άλλο" };
+    const typeBtn = (t, attrs) => `<button ${attrs} data-type="${t.id}" title="${esc(t.label)}">${esc(SHORT[t.id] || t.label)}</button>`;
+    if (e) {
+      const u = net.nodes.find(x => x.id === e.from), v = net.nodes.find(x => x.id === e.to);
+      el.innerHTML = `<div class="pop-h">Παρεμβολή στον ${esc(edgeLabel(e))}</div>
+        <div class="pop-sub">Ο σωλήνας κόβεται στα δύο: ${esc(nodeLabel(u))} → <b>νέο</b> → ${esc(nodeLabel(v))}.</div>
+        <div class="pop-grid">${types.filter(t => t.id !== PUMP).map(t => typeBtn(t, `data-act="insert" data-id="${esc(e.id)}"`)).join("")}</div>`;
+    } else {
+      const g = res.g;
+      const others = net.nodes.filter(x => x.id !== n.id);
+      const noIn = o => o.type !== PUMP && g.inE.get(o.id).filter(id => g.eById.get(id).from !== o.id).length === 0;
+      const rank = o => o.type === PUMP ? 0 : noIn(o) ? 1 : 2;
+      others.sort((a, b) => rank(a) - rank(b));
+      const tag = o => o.type === PUMP ? (project.openCircuit ? "αναρρόφηση αντλίας" : "κλείνει το κύκλωμα") : noIn(o) ? "χωρίς είσοδο — ενώνει κομμένο κομμάτι" : nodeType(o.type).short;
+      el.innerHTML = `<div class="pop-h">Από: ${esc(nodeLabel(n))}</div>
+        <div class="pop-sub">Σωλήνας προς <b>νέο</b> σημείο:</div>
+        <div class="pop-grid">${types.map(t => typeBtn(t, `data-act="add-to" data-from="${esc(n.id)}"`)).join("")}</div>
+        ${others.length ? `<div class="pop-sub">ή σωλήνας προς <b>υπάρχον</b> σημείο:</div>
+        <div class="pop-list">${others.map(o => `<button data-act="connect" data-from="${esc(n.id)}" data-to="${esc(o.id)}" class="${rank(o) < 2 ? "hl" : ""}"><b>→ ${esc(nodeLabel(o))}</b><small>${esc(tag(o))}</small></button>`).join("")}</div>` : ""}`;
+    }
+    const wrap = $("#schemWrap"), outer = $("#schemOuter"), a = (e ? edgeAnchors.get(e.id) : netAnchors.get(n.id)) || { x: 0, y: 0, hw: 0 };
+    const sx = wrap ? wrap.scrollLeft : 0, sy = wrap ? wrap.scrollTop : 0, ow = outer ? outer.clientWidth : 1000, pw = Math.min(410, ow - 8);
     let left = a.x + a.hw + 20 - sx;
     if (left + pw > ow) left = Math.max(4, a.x - a.hw - pw - 20 - sx);
     el.style.left = left + "px";
@@ -1086,7 +1116,7 @@
         ${field("Όνομα", `<input type="text" data-node="label" value="${esc(n.label)}">`)}</div>`)}
       ${t.dp ? sub("Β", "Πτώση πίεσης", "ndB", `<div class="grid g2">
         ${field("ΔP στην παροχή σχεδιασμού", `<input type="number" data-node="dP" value="${esc(n.dP)}" step="0.1" placeholder="0">`)}
-        ${field("Μονάδα", `<select data-node="unit">${["kPa", "m"].map(u => `<option ${u === n.unit ? "selected" : ""}>${u}</option>`).join("")}</select>`)}</div>
+        ${field("Μονάδα", `<select data-node="unit">${["kPa", "m"].map(u => `<option value="${u}" ${u === n.unit ? "selected" : ""}>${u === "m" ? "mwc" : u}</option>`).join("")}</select>`)}</div>
         <p class="desc">Από το φύλλο του κατασκευαστή.${t.decoupler ? " Buffer, διαχωριστής ή δεξαμενή στη μέση του δικτύου κόβει το κύκλωμα — ό,τι ακολουθεί το κυκλοφορεί άλλη αντλία." : ""}</p>`) : n.type === PUMP ? `<p class="desc">Η αντλία δεν έχει απώλειες· το H που χρειάζεται είναι το αποτέλεσμα. Σε κλειστό κύκλωμα η θέση της δεν αλλάζει το H.</p>` : ""}
       ${n.type !== PUMP ? sub(t.dp ? "Γ" : "Β", "Παροχή μέσα από αυτό <small>προαιρετικό</small>", "ndQ", `<div class="grid g2">
         ${field("Q [m³/h]", `<input type="number" data-node="Q" value="${esc(num(n.loadKW) > 0 ? "" : n.Q)}" step="0.01" ${num(n.loadKW) > 0 ? "disabled placeholder='από φορτίο'" : ""}>`)}
@@ -1106,7 +1136,7 @@
     const chip = $("#ndChip");
     chip.className = "chip " + (!nc.complete ? "c-inc" : nc.warns.length ? "c-warn" : "c-ok");
     chip.textContent = !nc.complete ? "Θέλει διόρθωση" : nc.warns.length ? "Με παρατήρηση" : "Εντάξει";
-    const eb = $("#ndB"); if (eb) eb.textContent = nc.m > 0 ? fmt(nc.m) + " m" : "";
+    const eb = $("#ndB"); if (eb) eb.textContent = nc.m > 0 ? fmt(nc.m) + " mwc" : "";
     const eq = $("#ndQ"); if (eq) eq.textContent = isFinite(nc.sIn) ? fmt(nc.sIn, 2) + " m³/h" : "";
     const line = (ids, dir) => ids.map(id => { const x = res.ecById.get(id), o = g.nById.get(dir === "in" ? x.e.from : x.e.to); return `<li><b class="mono">${esc(edgeLabel(x.e))}</b> ${dir === "in" ? "από" : "προς"} ${esc(nodeLabel(o))} · <span class="num">${x.c.Q > 0 ? fmt(x.c.Q, 2) : "—"} m³/h</span></li>`; }).join("");
     const ins = g.inE.get(n.id), outs = g.outE.get(n.id);
@@ -1133,7 +1163,7 @@
   function descOf(br) { return (br.desc || "").trim() || `${br.pipeFamily} ${br.pipeSize}`; }
   function field(label, inner, cls = "") { return `<div class="fld ${cls}"><label>${label}</label>${inner}</div>`; }
   function unitSel(attr, i, unit) {
-    return `<select ${attr}="${i}" data-k="unit" aria-label="Μονάδα">${["kPa", "m"].map(u => `<option ${u === unit ? "selected" : ""}>${u}</option>`).join("")}</select>`;
+    return `<select ${attr}="${i}" data-k="unit" aria-label="Μονάδα">${["kPa", "m"].map(u => `<option value="${u}" ${u === unit ? "selected" : ""}>${u === "m" ? "mwc" : u}</option>`).join("")}</select>`;
   }
   function stateOf(x, res) { return !x.c.complete ? "inc" : branchWarns(x.br, x.c, res).length ? "warn" : "ok"; }
   function stIcon(s) { return s === "ok" ? `<span class="st st-ok">${CHECK}</span>` : s === "warn" ? `<span class="st st-warn">!</span>` : `<span class="st st-inc"></span>`; }
@@ -1190,7 +1220,7 @@
           ${field("Αρχή βρόχου", `<select data-start="type">${startOpts}</select>`)}
           ${field("Περιγραφή", `<input type="text" data-start="label" value="${esc(st.label)}" placeholder="π.χ. μετά τον διαχωριστή">`)}
           ${field("ΔP αρχής", `<input type="number" id="startDP" data-start="dP" value="${esc(st.dP)}" step="0.1" placeholder="0">`)}
-          ${field("Μονάδα", `<select data-start="unit">${["kPa", "m"].map(u => `<option ${u === st.unit ? "selected" : ""}>${u}</option>`).join("")}</select>`)}
+          ${field("Μονάδα", `<select data-start="unit">${["kPa", "m"].map(u => `<option value="${u}" ${u === st.unit ? "selected" : ""}>${u === "m" ? "mwc" : u}</option>`).join("")}</select>`)}
         </div>
         <p class="desc">${st.type === "Αντλία"
           ? "Ο βρόχος ξεκινά και τελειώνει στην αντλία. Σωλήνες πριν και μετά την αντλία είναι απλώς κλάδοι σε σειρά — η σειρά τους δεν αλλάζει το άθροισμα. ΔP αρχής: κενό."
@@ -1264,7 +1294,7 @@
         <p class="lead">Η καμπύλη του δικτύου βγαίνει πάντα. Για σημείο λειτουργίας δώσε 3–5 σημεία από το φύλλο της αντλίας.</p>
         <div class="pumpgrid">
           <div>
-            <table class="table"><thead><tr><th></th><th>Q [m³/h]</th><th>H [m]</th><th></th></tr></thead><tbody>${pts}</tbody></table>
+            <table class="table"><thead><tr><th></th><th>Q [m³/h]</th><th>H [mwc]</th><th></th></tr></thead><tbody>${pts}</tbody></table>
             ${project.pump.points.length < 5 ? `<button class="add" data-act="pp-add">+ Σημείο</button>` : ""}
             ${field("Βαθμός απόδοσης η [%]", `<input type="number" data-pump="eta" value="${esc(project.pump.eta)}" min="1" max="100" step="1">`)}
           </div>
@@ -1300,13 +1330,13 @@
       const sizeSel = `<select data-fit="${i}" data-k="size" aria-label="Διατομή"><option value="">= σωλήνα</option>${fam.sizes.map(s => `<option ${s[0] === f.size && f.size !== br.pipeSize ? "selected" : ""}>${esc(s[0])}</option>`).join("")}</select>`;
       return `<tr data-fi="${i}">
         <td class="c-type"><select data-fit="${i}" data-k="type" aria-label="Είδος">${fittingSelectHTML(f.type)}</select></td>
-        <td class="c-size">${sizeSel}</td>
-        <td class="c-n"><input type="number" class="n" data-fit="${i}" data-k="qty" value="${esc(f.qty)}" min="0" step="1" aria-label="Τεμάχια"></td>
-        <td class="c-n"><input type="number" class="n" data-fit="${i}" data-k="zeta" value="${esc(f.zeta)}" step="0.05" placeholder="ζ" aria-label="ζ"></td>
-        <td class="c-n"><input type="number" class="n" data-fit="${i}" data-k="kv" value="${esc(f.kv)}" step="0.1" placeholder="Kv" aria-label="Kv"></td>
+        <td class="c-size" data-l="Διατομή">${sizeSel}</td>
+        <td class="c-n c-qty" data-l="Τεμ."><input type="number" class="n" data-fit="${i}" data-k="qty" value="${esc(f.qty)}" min="0" step="1" aria-label="Τεμάχια"></td>
+        <td class="c-n c-z" data-l="ζ"><input type="number" class="n" data-fit="${i}" data-k="zeta" value="${esc(f.zeta)}" step="0.05" placeholder="ζ" aria-label="ζ"></td>
+        <td class="c-n c-kv" data-l="Kv"><input type="number" class="n" data-fit="${i}" data-k="kv" value="${esc(f.kv)}" step="0.1" placeholder="Kv" aria-label="Kv"></td>
         <td class="meth"></td>
-        <td class="out r tot"></td>
-        <td><button class="icon" data-act="fit-del" data-i="${i}" aria-label="Διαγραφή">✕</button></td>
+        <td class="out r tot" data-l="ΔP [mwc]"></td>
+        <td class="c-del"><button class="icon" data-act="fit-del" data-i="${i}" aria-label="Διαγραφή">✕</button></td>
       </tr>`;
     }).join("");
 
@@ -1347,7 +1377,7 @@
       <div class="kpis" id="pipeKpis"></div>`);
     const Dd = sub("Δ", "Εξαρτήματα και βάνες", "subFit", `
       ${fitRows ? `<div class="tablewrap"><table class="table fit">
-        <thead><tr><th>Είδος</th><th>Διατομή</th><th class="r">Τεμ.</th><th class="r">ζ</th><th class="r">Kv</th><th>Με</th><th class="r">ΔP [m]</th><th></th></tr></thead>
+        <thead><tr><th>Είδος</th><th>Διατομή</th><th class="r">Τεμ.</th><th class="r">ζ</th><th class="r">Kv</th><th>Με</th><th class="r">ΔP [mwc]</th><th></th></tr></thead>
         <tbody>${fitRows}</tbody></table></div>` : ""}
       <button class="add" data-act="fit-add">+ Εξάρτημα</button>
       <p class="desc">Αν δώσεις Kv από το φύλλο του κατασκευαστή, χρησιμοποιείται αυτό αντί για το ζ.${dbl ? " Τα τεμάχια είναι συνολικά για προσαγωγή και επιστροφή." : ""}</p>
@@ -1361,7 +1391,8 @@
         <div class="br-h">
           <h2 id="brTitle"></h2>
           <span class="chip" id="brChip"></span>
-          <button class="ghost small danger" data-act="del" data-id="${esc(br.id)}">Διαγραφή</button>
+          <span class="brh-btns">${net ? `<button class="ghost small" data-act="insert-open" data-id="${esc(br.id)}" title="Κόβει τον σωλήνα και βάζει ενδιάμεσα σημείο ή εξοπλισμό">+ Παρεμβολή</button>` : ""}
+          <button class="ghost small danger" data-act="del" data-id="${esc(br.id)}">Διαγραφή</button></span>
         </div>
         ${A}${B}${br.direct ? "" : C + Dd + E}
         <div class="brtotal">
@@ -1391,7 +1422,7 @@
 
     if (net) { const ns = $("#netStatus"); if (ns) ns.innerHTML = netStatusHtml(res); renderSchematic(res); } else renderChain(res);
     const pth = $("#paths"); if (pth) pth.innerHTML = net ? netPathsTable(res) : "";
-    const ex = $("#exTot"); if (ex) ex.textContent = project.extras.length ? fmt(res.sumExtras - res.startM) + " m" : "";
+    const ex = $("#exTot"); if (ex) ex.textContent = project.extras.length ? fmt(res.sumExtras - res.startM) + " mwc" : "";
 
     const entry = res.cById.get(selId);
     if (entry && $("#sec-branch")) renderBranchOutputs(entry, res);
@@ -1411,7 +1442,7 @@
       return `<span class="arr" aria-hidden="true">→</span>
         <button class="cchip s-${s} ${sel ? "sel" : ""}" data-act="pick" data-id="${esc(id)}">
           ${stIcon(s)}<span class="cc-main"><span class="cc-t"><b class="mono">${esc(branchLabel(x.br))}</b><span class="cc-d">${esc(trunc(descOf(x.br), 26))}</span></span>
-          <small>${x.c.complete ? fmt(x.c.dP) + " m" : "λείπει: " + esc(x.c.missing.join(", "))}</small></span>
+          <small>${x.c.complete ? fmt(x.c.dP) + " mwc" : "λείπει: " + esc(x.c.missing.join(", "))}</small></span>
         </button>`;
     }).join("");
     el.innerHTML = `<span class="cstart">Αρχή · ${esc(st.type)}${st.label ? ": " + esc(trunc(st.label, 22)) : ""}</span>${items}
@@ -1450,11 +1481,11 @@
     } else if (c.Qsrc === "auto") qi.push(c.Q > 0 ? `Αυτόματα: άθροισμα των κλάδων μετά = <b class="num">${fmt(c.Q, 2)} m³/h</b>.` : "Αυτόματα από τους κλάδους μετά — δεν έχουν όλοι παροχή ακόμα.");
     $("#qInfo").innerHTML = qi.join(" ");
     if (br.direct) {
-      $("#brTotLbl").textContent = "ΔP σύνδεσης"; $("#brTot").textContent = "0 m";
+      $("#brTotLbl").textContent = "ΔP σύνδεσης"; $("#brTot").textContent = "0 mwc";
       const bs = $("#brStack"); if (bs) bs.innerHTML = ""; const bl = $("#brStackL"); if (bl) bl.innerHTML = "";
       return;
     }
-    $("#subPipe").textContent = isFinite(p.dP) ? fmt(p.dP) + " m" : "—";
+    $("#subPipe").textContent = isFinite(p.dP) ? fmt(p.dP) + " mwc" : "—";
     $("#lenInfo").innerHTML = num(br.length) > 0 ? `στον υπολογισμό <b class="num">${fmt(p.Leff, 1)} m</b>` : "";
     const vs = vState(p.v, p.D_int), rs = rState(p.R);
     $("#pipeKpis").innerHTML = [
@@ -1472,11 +1503,11 @@
       const z = row.querySelector('[data-k="zeta"]'), k = row.querySelector('[data-k="kv"]');
       z.classList.toggle("dim", r.method === "Kv"); k.classList.toggle("dim", r.method !== "Kv");
     });
-    $("#subFit").textContent = br.fittings.length ? fmt(c.sumFit) + " m" : "";
+    $("#subFit").textContent = br.fittings.length ? fmt(c.sumFit) + " mwc" : "";
     $("#authInfo").innerHTML = c.ctrl ? `Βάνα ελέγχου: ΔP <b class="num">${fmt(toKPa(c.ctrl.dPv, fp), 1)} kPa</b> · authority β = <b class="num ${c.ctrl.auth < D.authMin ? "warnTxt" : "ok"}">${fmt(c.ctrl.auth, 2)}</b> (στόχος ≥ ${D.authMin})` : "";
-    $("#subEq").textContent = (br.equip || []).length ? fmt(c.sumEquip) + " m" : "";
+    $("#subEq").textContent = (br.equip || []).length ? fmt(c.sumEquip) + " mwc" : "";
     $("#brTotLbl").textContent = `ΔP ${net ? "σωλήνα" : "κλάδου"} ${branchLabel(br)}`;
-    $("#brTot").textContent = `${fmt(c.dP)} m · ${fmt(toKPa(c.dP, fp), 1)} kPa`;
+    $("#brTot").textContent = `${fmt(c.dP)} mwc · ${fmt(toKPa(c.dP, fp), 1)} kPa`;
     const pd = isFinite(p.dP) ? p.dP : 0, tot = pd + c.sumFit + c.sumEquip;
     const pc = v => tot > 0 ? (100 * v / tot).toFixed(1) : 0;
     $("#brStack").innerHTML = tot > 0 ? `<i class="k1" style="width:${pc(pd)}%"></i><i class="k2" style="width:${pc(c.sumFit)}%"></i><i class="k3" style="width:${pc(c.sumEquip)}%"></i>` : "";
@@ -1492,12 +1523,12 @@
     const net = res.mode === "network";
     const worstLeaf = !net && res.worst ? res.cById.get(res.worst.leaf) : null;
     const wName = net ? res.worstText : worstLeaf ? branchLabel(worstLeaf.br) : "";
-    const rows = [[`Δυσμενέστερη διαδρομή${wName ? (net ? " μέσω " : " → ") + esc(wName) : ""}`, fmt(net && res.suction ? res.worst.dP : res.sumBranches) + " m"]];
-    if (net && res.suction) rows.push(["Αναρρόφηση (πηγή → αντλία)", fmt(res.suction.dP) + " m"]);
-    if (res.startM > 0) rows.push([`Αρχή βρόχου (${esc(project.start.type)})`, fmt(res.startM) + " m"]);
-    if (project.extras.length) rows.push(["Κοινός εξοπλισμός", fmt(res.sumExtras - res.startM) + " m"]);
-    rows.push([`Προσαύξηση ${fmt(res.margin * 100, 0)} %`, fmt(res.Hfric - res.base) + " m"]);
-    if (project.openCircuit) rows.push(["Στατικό ύψος", fmt(res.Hstatic, 2) + " m"]);
+    const rows = [[`Δυσμενέστερη διαδρομή${wName ? (net ? " μέσω " : " → ") + esc(wName) : ""}`, fmt(net && res.suction ? res.worst.dP : res.sumBranches) + " mwc"]];
+    if (net && res.suction) rows.push(["Αναρρόφηση (πηγή → αντλία)", fmt(res.suction.dP) + " mwc"]);
+    if (res.startM > 0) rows.push([`Αρχή βρόχου (${esc(project.start.type)})`, fmt(res.startM) + " mwc"]);
+    if (project.extras.length) rows.push(["Κοινός εξοπλισμός", fmt(res.sumExtras - res.startM) + " mwc"]);
+    rows.push([`Προσαύξηση ${fmt(res.margin * 100, 0)} %`, fmt(res.Hfric - res.base) + " mwc"]);
+    if (project.openCircuit) rows.push(["Στατικό ύψος", fmt(res.Hstatic, 2) + " mwc"]);
     rows.push(["Υδραυλική ισχύς", isFinite(res.Ph) ? fmt(res.Ph, 0) + " W" : "—"]);
 
     const miss = val.errors.length ? `<div class="mini"><h3>Τι λείπει</h3><ul class="lst err">${val.errors.map(e => `<li>${esc(e)}</li>`).join("")}</ul></div>` : "";
@@ -1508,7 +1539,7 @@
         <h3>Αποτέλεσμα</h3>
         <div class="kpi-main ${res.provisional ? "prov" : ""}">
           <span>Μανομετρικό κυκλοφορητή ${res.provisional ? `<em class="pbadge">προσωρινό</em>` : ""}</span>
-          <b>${res.H > 0 ? fmt(res.H, 2) + " m" : "—"}</b>
+          <b>${res.H > 0 ? fmt(res.H, 2) + " mwc" : "—"}</b>
           <span class="kpi-sub">${res.H > 0 ? fmt(toKPa(res.H, fp), 1) + " kPa · " : ""}Q = ${fmt(res.Qd, 2)} m³/h</span>
         </div>
         ${res.provisional ? `<p class="provnote">Λείπουν στοιχεία (δες «Τι λείπει»). Ελλιπείς κλάδοι δεν μετράνε ακόμα — το H μπορεί να αυξηθεί.</p>` : ""}
@@ -1527,7 +1558,7 @@
 
   function renderMbar(res) {
     const mb = $("#mbar"); if (!mb) return;
-    mb.innerHTML = `<div><small>Μανομετρικό${res.provisional ? " · προσωρινό" : ""}</small><b>${res.H > 0 ? fmt(res.H, 2) + " m" : "—"}</b><small>Q ${fmt(res.Qd, 2)} m³/h</small></div><button data-act="to-side">Ανάλυση ↓</button>`;
+    mb.innerHTML = `<div><small>Μανομετρικό${res.provisional ? " · προσωρινό" : ""}</small><b>${res.H > 0 ? fmt(res.H, 2) + " mwc" : "—"}</b><small>Q ${fmt(res.Qd, 2)} m³/h</small></div><button data-act="to-side">Ανάλυση ↓</button>`;
   }
 
   /* ---------------- Διάγραμμα αντλίας / δικτύου (SVG) ---------------- */
@@ -1559,7 +1590,7 @@
       <circle cx="${X(Qd)}" cy="${Y(Hd)}" r="5" fill="#FFFFFF" stroke="#C2410C" stroke-width="2.4"/>
       ${op ? `<circle cx="${X(op.Q)}" cy="${Y(op.H)}" r="5.5" fill="#1E7A45"/>` : ""}
       <text x="${L + w}" y="${T + h + 28}" text-anchor="end">Q [m³/h]</text>
-      <text x="${L + 6}" y="${T + 10}">H [m]</text>
+      <text x="${L + 6}" y="${T + 10}">H [mwc]</text>
     </svg>
     <div class="legend"><span><i class="l-sys"></i>Δίκτυο</span>${fit ? `<span><i class="l-pmp"></i>Αντλία</span>` : ""}<span><i class="l-des"></i>Σχεδιασμός</span>${op ? `<span><i class="l-op"></i>Σημείο λειτουργίας</span>` : ""}</div>`;
   }
@@ -1568,7 +1599,7 @@
     let txt = "";
     if (!res.pump.fit) txt = `<p class="desc">Χωρίς σημεία αντλίας φαίνεται μόνο η καμπύλη του δικτύου και το σημείο σχεδιασμού.</p>`;
     else if (!op) txt = `<div class="warnbox">Η καμπύλη της αντλίας δεν τέμνει την καμπύλη του δικτύου.</div>`;
-    else txt = `<div class="rowline"><span>Σημείο λειτουργίας</span><span>${fmt(op.Q, 2)} m³/h · ${fmt(op.H, 2)} m</span></div>
+    else txt = `<div class="rowline"><span>Σημείο λειτουργίας</span><span>${fmt(op.Q, 2)} m³/h · ${fmt(op.H, 2)} mwc</span></div>
       <div class="rowline"><span>Απόκλιση από σχεδιασμό</span><span>${op.Q >= res.Qd ? "+" : ""}${fmt(100 * (op.Q / res.Qd - 1), 1)} %</span></div>
       <div class="rowline"><span>Υδραυλική ισχύς</span><span>${fmt(op.Ph, 0)} W</span></div>
       <div class="rowline"><span>Ισχύς άξονα</span><span>${isFinite(op.Pshaft) ? fmt(op.Pshaft, 0) + " W" : "δώσε η"}</span></div>`;
@@ -1577,6 +1608,7 @@
 
   /* ---------------- FULL RENDER ---------------- */
   function render() {
+    if (!$("#flowMain")) return;
     const res = calcProject();
     if (selId && !res.cById.has(selId)) selId = null;
     if (res.mode === "network") {
@@ -1603,19 +1635,99 @@
   function netAdd(fromId, type, toId) {
     const net = project.net, g = graphOf(net);
     const like = [...g.inE.get(fromId), ...g.outE.get(fromId)].map(id => g.eById.get(id)).find(e => !e.direct) || net.edges.find(e => !e.direct);
+    snap();
     let to = toId;
     if (!to) { const n = newNode(type); net.nodes.push(n); to = n.id; }
     net.edges.push(newEdge(fromId, to, like, false));
     pop = null;
     render();
   }
+  /* Παρεμβολή: ο σωλήνας κόβεται στο νέο σημείο. Ο αρχικός κρατά κωδικό,
+     εξαρτήματα και μήκος (να διορθωθεί)· ο νέος μετά το σημείο παίρνει ίδιο
+     υλικό και διατομή και μένει χωρίς μήκος ώστε να φαίνεται ότι θέλει στοιχεία. */
+  function insertOnEdge(edgeId, type) {
+    const net = project.net, e = net.edges.find(x => x.id === edgeId); if (!e) return;
+    snap();
+    const n = newNode(type); net.nodes.push(n);
+    const e2 = newEdge(n.id, e.to, e.direct ? null : e, e.direct);
+    e2.kind = e.kind;
+    e.to = n.id;
+    net.edges.splice(net.edges.indexOf(e) + 1, 0, e2);
+    pop = null; selId = null; selNode = null;
+    render();
+    toast(e.direct ? `Προστέθηκε ${nodeLabel(n)}.` : `Ο ${edgeLabel(e)} κόπηκε στο «${nodeLabel(n)}»: ${edgeLabel(e)} πριν, ${edgeLabel(e2)} μετά. Διόρθωσε το μήκος του ${edgeLabel(e)} και δώσε μήκος στον ${edgeLabel(e2)}.`, true);
+  }
+  function delEdge(id) {
+    const e = project.net.edges.find(x => x.id === id); if (!e) return;
+    snap();
+    project.net.edges = project.net.edges.filter(x => x.id !== id);
+    if (selId === id) selId = null;
+    pop = null; render();
+    toast(`Διαγράφηκε ο ${edgeLabel(e)}. Ένωσε ξανά με το + του σημείου πριν → «υπάρχον σημείο».`, true);
+  }
+  /* Διαγραφή σημείου. Αν είναι ενδιάμεσο (ένας σωλήνας μπαίνει, ένας βγαίνει)
+     το δίκτυο δεν κόβεται:
+     - ίδιος σωλήνας πριν και μετά, ή κόμβος → οι δύο σωλήνες γίνονται ένας (μήκη και εξαρτήματα αθροίζονται)
+     - εξοπλισμός ανάμεσα σε διαφορετικούς σωλήνες → μένει κόμβος (αλλαγή διατομής), τίποτα δεν χάνεται. */
   function delNode(id) {
-    const n = project.net.nodes.find(x => x.id === id); if (!n) return;
-    const k = project.net.edges.filter(e => e.from === id || e.to === id).length;
-    if (!confirm(`Διαγραφή του «${nodeLabel(n)}»${k ? ` και των ${k} σωλήνων του` : ""};`)) return;
-    project.net.edges = project.net.edges.filter(e => e.from !== id && e.to !== id);
-    project.net.nodes = project.net.nodes.filter(x => x.id !== id);
+    const net = project.net, n = net.nodes.find(x => x.id === id); if (!n) return;
+    const ins = net.edges.filter(e => e.to === id && e.from !== id), outs = net.edges.filter(e => e.from === id && e.to !== id);
+    const name = nodeLabel(n);
+    snap();
+    let msg;
+    if (n.type !== PUMP && ins.length === 1 && outs.length === 1 && ins[0].from !== outs[0].to) {
+      const a = ins[0], b = outs[0];
+      const same = !a.direct && !b.direct && a.pipeFamily === b.pipeFamily && a.pipeSize === b.pipeSize;
+      // Η παροχή που είχε δοθεί στο σημείο περνά στον σωλήνα (σε σειρά είναι ίδια)
+      const keepQ = e2 => { if (String(e2.Q).trim() === "" && !(num(e2.loadKW) > 0) && (String(n.Q).trim() !== "" || num(n.loadKW) > 0)) { e2.Q = n.Q; e2.loadKW = n.loadKW; } };
+      if (a.direct || b.direct || same || n.type === "junction") {
+        const keep = a.direct && !b.direct ? b : a, other = keep === a ? b : a;
+        const from = a.from, to = b.to;
+        if (!a.direct && !b.direct) {
+          const la = String(a.length).trim() === "" ? NaN : lengthEff(a), lb = String(b.length).trim() === "" ? NaN : lengthEff(b);
+          const L = la + lb;
+          keep.length = isFinite(L) ? String(+(L / (kindOf(keep.kind).double ? 2 : 1)).toFixed(2)) : "";
+          keep.fittings = a.fittings.concat(b.fittings);
+          keep.equip = (a.equip || []).concat(b.equip || []);
+          if (String(keep.Q).trim() === "" && !(num(keep.loadKW) > 0)) { keep.Q = other.Q; keep.loadKW = other.loadKW; }
+        }
+        keep.from = from; keep.to = to; keepQ(keep);
+        net.edges = net.edges.filter(x => x !== other);
+        net.nodes = net.nodes.filter(x => x.id !== id);
+        msg = a.direct || b.direct ? `Διαγράφηκε: ${name}. Ο ${edgeLabel(keep)} συνεχίζει.`
+          : `Διαγράφηκε: ${name}. Οι ${edgeLabel(a)} και ${edgeLabel(b)} έγιναν ένας (${edgeLabel(keep)}): μήκη και εξαρτήματα αθροίστηκαν${same ? "" : `, διατομή ${keep.pipeFamily} ${keep.pipeSize} — έλεγξέ τη`}.`;
+      } else {
+        keepQ(a);
+        const j = newNode("junction");
+        Object.assign(n, { type: "junction", label: j.label, dP: "", Q: "", loadKW: "" });
+        msg = `Αφαιρέθηκε ο εξοπλισμός ${name}. Έμεινε κόμβος αλλαγής διατομής ανάμεσα σε ${edgeLabel(a)} (${a.pipeSize}) και ${edgeLabel(b)} (${b.pipeSize}).`;
+      }
+    } else {
+      const k = net.edges.filter(e => e.from === id || e.to === id).length;
+      net.edges = net.edges.filter(e => e.from !== id && e.to !== id);
+      net.nodes = net.nodes.filter(x => x.id !== id);
+      msg = `Διαγράφηκε: ${name}${k ? ` και ${k === 1 ? "ο σωλήνας του" : `οι ${k} σωλήνες του`}` : ""}.`;
+    }
     selNode = null; pop = null; render();
+    toast(msg, true);
+  }
+  /* Αναίρεση αντί για παράθυρα επιβεβαίωσης: κάθε αλλαγή δομής κρατά αντίγραφο. */
+  const undoStack = [];
+  function snap() { undoStack.push(JSON.stringify(project)); if (undoStack.length > 50) undoStack.shift(); }
+  function undo() {
+    const s = undoStack.pop();
+    if (!s) { toast("Δεν υπάρχει κάτι για αναίρεση."); return; }
+    project = normalize(JSON.parse(s)); pop = null;
+    render(); toast("Αναιρέθηκε.");
+  }
+  let toastT = null;
+  function toast(msg, canUndo) {
+    if (typeof document === "undefined" || !document.body) return;
+    let el = $("#toast");
+    if (!el) { el = document.createElement("div"); el.id = "toast"; el.className = "toast"; el.setAttribute("role", "status"); document.body.appendChild(el); }
+    el.innerHTML = `<span>${esc(msg)}</span>${canUndo ? `<button data-act="undo">Αναίρεση</button>` : ""}<button class="icon" data-act="toast-x" aria-label="Κλείσιμο">✕</button>`;
+    el.hidden = false;
+    clearTimeout(toastT); toastT = setTimeout(() => { el.hidden = true; }, canUndo ? 9000 : 3000);
   }
   /* Ο νέος κλάδος επιλέγεται αλλά η οθόνη μένει εκεί που είσαι: στήνεις πρώτα
      το δίκτυο και τον συμπληρώνεις μετά (μένει κόκκινος ως τότε). */
@@ -1683,10 +1795,13 @@
   }
   function onClick(e) {
     const t = e.target.closest("[data-act]");
-    if (pop && !e.target.closest("#pop") && !(t && (t.dataset.act === "plus" || t.dataset.act === "plus-node"))) { pop = null; const p = $("#pop"); if (p) { p.hidden = true; p.innerHTML = ""; } }
+    if (pop && !e.target.closest("#pop") && !(t && /^(plus|plus-node|plus-edge|insert-open)$/.test(t.dataset.act))) { pop = null; const p = $("#pop"); if (p) { p.hidden = true; p.innerHTML = ""; } }
     if (!t) return;
     const a = t.dataset.act, id = t.dataset.id;
+    if (a === "undo") { undo(); return; }
+    if (a === "toast-x") { const x = $("#toast"); if (x) x.hidden = true; return; }
     if (a === "mode") {
+      snap();
       const r = setMode(t.dataset.mode);
       if (!r.ok) { alert(r.msg); return; }
       pop = null; render(); return;
@@ -1695,10 +1810,13 @@
       if (a === "pick") { selId = id; selNode = null; pop = null; render(); return; }
       if (a === "pick-node") { selNode = id; selId = null; pop = null; render(); return; }
       if (a === "plus" || a === "plus-node") { pop = pop && pop.id === id ? null : { id }; renderNetPop(calcProject()); return; }
+      if (a === "plus-edge") { pop = pop && pop.id === id ? null : { id, edge: true }; renderNetPop(calcProject()); return; }
+      if (a === "insert-open") { const r = $("#schemWrap"); pop = { id, edge: true }; renderNetPop(calcProject()); if (r && r.scrollIntoView) r.scrollIntoView({ block: "nearest" }); return; }
       if (a === "add-to") { netAdd(t.dataset.from, t.dataset.type); return; }
-      if (a === "connect") { const to = $("#connTo"); if (to && to.value) netAdd(t.dataset.from, null, to.value); return; }
+      if (a === "connect") { netAdd(t.dataset.from, null, t.dataset.to); return; }
+      if (a === "insert") { insertOnEdge(id, t.dataset.type); return; }
       if (a === "del-node") { delNode(id); return; }
-      if (a === "del") { const e2 = project.net.edges.find(x => x.id === id); if (e2 && confirm(`Διαγραφή του ${edgeLabel(e2)};`)) { project.net.edges = project.net.edges.filter(x => x.id !== id); selId = null; pop = null; render(); } return; }
+      if (a === "del") { delEdge(id); return; }
       if (a === "close-drawer") { selId = null; selNode = null; render(); return; }
       if (a === "net-expand") { netFull = !netFull; render(); return; }
     }
@@ -1722,9 +1840,10 @@
     if (a === "restore-no") { restorable = null; render(); return; }
     if (a === "load") { $("#fileInput").click(); return; }
     if (a === "to-side") { const s = $("#side"); if (s) s.scrollIntoView({ behavior: "smooth" }); return; }
-    if (a === "new") { if (confirm("Νέο έργο; Ό,τι δεν έχει αποθηκευτεί σε αρχείο θα χαθεί.")) { project = blankProject(); selId = null; selNode = null; pop = null; render(); } return; }
+    if (a === "new") { snap(); project = blankProject(); selId = null; selNode = null; pop = null; render(); toast("Νέο έργο.", true); return; }
   }
   function onKey(e) {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === "z" || e.key === "Z") && !/INPUT|SELECT|TEXTAREA/.test((e.target && e.target.tagName) || "")) { e.preventDefault(); undo(); return; }
     if (e.key === "Escape") {
       if (pop) { pop = null; const p = $("#pop"); if (p) { p.hidden = true; p.innerHTML = ""; } return; }
       if (project.mode === "network" && (selId || selNode)) { selId = null; selNode = null; render(); return; }
@@ -1736,8 +1855,7 @@
       if (t.classList.contains("seg")) {
         e.preventDefault();
         if (project.mode !== "network") { delBranch(t.dataset.id); return; }
-        const e2 = project.net.edges.find(x => x.id === t.dataset.id);
-        if (e2 && confirm(`Διαγραφή του ${edgeLabel(e2)};`)) { project.net.edges = project.net.edges.filter(x => x.id !== e2.id); selId = null; render(); }
+        delEdge(t.dataset.id);
         return;
       }
     }
@@ -1748,15 +1866,14 @@
   function delBranch(id) {
     const b = project.branches.find(x => x.id === id); if (!b) return;
     const kids = project.branches.filter(x => x.parent === id);
-    const msg = kids.length
-      ? `Διαγραφή του ${branchLabel(b)}; Οι κλάδοι μετά από αυτόν (${kids.map(branchLabel).join(", ")}) θα ξεκινούν από εκεί που ξεκινούσε ο ${branchLabel(b)}.`
-      : `Διαγραφή του ${branchLabel(b)};`;
-    if (!confirm(msg)) return;
+    const msg = `Διαγράφηκε ο ${branchLabel(b)}.` + (kids.length ? ` Οι ${kids.map(branchLabel).join(", ")} ξεκινούν πλέον από εκεί που ξεκινούσε.` : "");
+    snap();
     kids.forEach(k => { k.parent = b.parent; });
     project.branches = project.branches.filter(x => x.id !== id);
     if (selId === id) selId = b.parent || null;
     pop = null;
     render();
+    toast(msg, true);
   }
 
   if (typeof document !== "undefined" && document.addEventListener) {
@@ -1830,8 +1947,10 @@
     r.onload = () => {
       try {
         const p = parseProjectText(r.result);
-        if (!isEmpty(project) && !confirm("Να αντικατασταθεί το τρέχον έργο από το αρχείο;")) return;
+        const had = !isEmpty(project);
+        if (had) snap();
         project = normalize(p); restorable = null; selId = null; pop = null; render();
+        if (had) toast("Άνοιξε το αρχείο· το προηγούμενο έργο αντικαταστάθηκε.", true);
       }
       catch (e) { alert("Το αρχείο δεν είναι έργο του Υπολογισμού κυκλοφορητή (.html ή .json)."); }
     };
@@ -1938,9 +2057,9 @@
       return `<div class="br">
         <div class="bh"><span class="badge">${esc(branchLabel(br))}</span><span class="bt">${esc(descOf(br))}</span>${c.complete ? "" : `<span class="ktag" style="background:#FDECEA;color:#B42318">ελλιπής: ${esc(c.missing.join(", "))}</span>`}</div>
         <div class="params">${esc(br.pipeFamily)} ${esc(br.pipeSize)} · D ${fmt(p.D_int, 2)} mm · k ${fmt(p.k, 3)} mm · L ${dbl ? `2×${esc(br.length)} = ` : ""}${fmt(p.Leff, 1)} m · Q ${fmt(c.Q, 2)} m³/h${c.Qsrc === "load" ? ` (${esc(br.loadKW)} kW)` : c.Qsrc === "auto" ? " (Σ κλάδων μετά)" : ""}<br>v ${fmt(p.v, 3)} m/s · Re ${isFinite(p.Re) ? Math.round(p.Re) : "—"} (${esc(p.regime || "—")}) · λ ${fmt(p.lambda, 4)} · R ${fmt(p.R, 0)} Pa/m · ΔP σωλήνα ${fmt(p.dP)} m${from}</div>
-        ${fits || eqs ? `<table><thead><tr><th>Εξάρτημα / εξοπλισμός</th><th>Διατομή</th><th class="r">Τεμ.</th><th class="r">ζ</th><th class="r">Kv</th><th class="r">ΔP/τεμ [m]</th><th class="r">ΔP [m]</th></tr></thead><tbody>${fits}${eqs}</tbody></table>` : ""}
+        ${fits || eqs ? `<table><thead><tr><th>Εξάρτημα / εξοπλισμός</th><th>Διατομή</th><th class="r">Τεμ.</th><th class="r">ζ</th><th class="r">Kv</th><th class="r">ΔP/τεμ [mwc]</th><th class="r">ΔP [mwc]</th></tr></thead><tbody>${fits}${eqs}</tbody></table>` : ""}
         ${c.ctrl ? `<div class="params">Βάνα ελέγχου: authority β = ${fmt(c.ctrl.auth, 2)}</div>` : ""}
-        <p class="dpline">ΔP κλάδου ${esc(branchLabel(br))} = <b>${fmt(c.dP)} m · ${kp(c.dP)} kPa</b></p>
+        <p class="dpline">ΔP κλάδου ${esc(branchLabel(br))} = <b>${fmt(c.dP)} mwc · ${kp(c.dP)} kPa</b></p>
       </div>`;
     }).join("");
 
@@ -1948,8 +2067,8 @@
     const op = res.pump.op;
     const pumpSec = res.Qd > 0 && res.base > 0 ? `<h2>Καμπύλη δικτύου${res.pump.fit ? " και αντλίας" : ""}</h2><div class="cols"><div>${pumpChart(res)}</div><div>
         <table><tbody>
-          <tr><td>Σχεδιασμός</td><td class="r num">${fmt(res.Qd, 2)} m³/h · ${fmt(res.H, 2)} m</td></tr>
-          ${op ? `<tr><td>Σημείο λειτουργίας</td><td class="r num">${fmt(op.Q, 2)} m³/h · ${fmt(op.H, 2)} m</td></tr>
+          <tr><td>Σχεδιασμός</td><td class="r num">${fmt(res.Qd, 2)} m³/h · ${fmt(res.H, 2)} mwc</td></tr>
+          ${op ? `<tr><td>Σημείο λειτουργίας</td><td class="r num">${fmt(op.Q, 2)} m³/h · ${fmt(op.H, 2)} mwc</td></tr>
           <tr><td>Υδραυλική ισχύς</td><td class="r num">${fmt(op.Ph, 0)} W</td></tr>
           <tr><td>Ισχύς άξονα${res.pump.eta > 0 ? ` (η ${fmt(res.pump.eta * 100, 0)} %)` : ""}</td><td class="r num">${isFinite(op.Pshaft) ? fmt(op.Pshaft, 0) + " W" : "—"}</td></tr>`
           : `<tr><td>Υδραυλική ισχύς (σχεδιασμός)</td><td class="r num">${fmt(res.Ph, 0)} W</td></tr>`}
@@ -1967,18 +2086,18 @@
         <div class="meta">Ημερομηνία: <b>${esc(date)}</b><br>${m.engineer ? `Μηχανικός: <b>${esc(m.engineer)}</b><br>` : ""}Ρευστό: <b>${esc(fp.label)} · ${esc(project.waterTemp)} °C</b></div></header>
       ${res.provisional ? `<div class="prov">ΠΡΟΣΩΡΙΝΟ — λείπουν στοιχεία. Ελλιπείς κλάδοι δεν περιλαμβάνονται στο H.</div>` : ""}
       <div class="kpis">
-        <div class="kpi main"><div class="l">Μανομετρικό H</div><div class="v">${fmt(res.H, 2)} m</div><div class="s">${kp(res.H)} kPa</div></div>
+        <div class="kpi main"><div class="l">Μανομετρικό H</div><div class="v">${fmt(res.H, 2)} mwc</div><div class="s">${kp(res.H)} kPa</div></div>
         <div class="kpi"><div class="l">Παροχή σημείου λειτουργίας</div><div class="v">${fmt(res.Qd, 2)} m³/h</div><div class="s">${fmt(res.Qd / 3.6, 3)} l/s</div></div>
         <div class="kpi"><div class="l">Υδραυλική ισχύς</div><div class="v">${fmt(res.Ph, 0)} W</div><div class="s">ρ·g·Q·H</div></div>
         <div class="kpi"><div class="l">Ρευστό</div><div class="v" style="font-size:10pt">${esc(fp.label)}</div><div class="s">ν ${fmt(fp.nu * 1e6, 3)}e-6 · ρ ${fmt(fp.rho, 0)}${project.aged ? " · παλαιό δίκτυο" : ""}</div></div>
       </div>
       ${schemSec}
       <h2>Σχηματισμός H</h2>
-      <table><thead><tr><th></th><th class="r">m</th><th class="r">kPa</th></tr></thead><tbody>${hRows}</tbody></table>
+      <table><thead><tr><th></th><th class="r">mwc</th><th class="r">kPa</th></tr></thead><tbody>${hRows}</tbody></table>
       ${net ? `<h2>Διαδρομές</h2>
-      <table><thead><tr><th>Ως το τέλος του</th><th>Περιγραφή</th><th>Άθροισμα κλάδων</th><th class="r">ΔP [m]</th><th class="r">Στραγγαλισμός [kPa]</th><th class="r">Kv εξισ.</th></tr></thead><tbody>${circRows}</tbody></table>` : ""}
+      <table><thead><tr><th>Ως το τέλος του</th><th>Περιγραφή</th><th>Άθροισμα κλάδων</th><th class="r">ΔP [mwc]</th><th class="r">Στραγγαλισμός [kPa]</th><th class="r">Kv εξισ.</th></tr></thead><tbody>${circRows}</tbody></table>` : ""}
       <h2>Κλάδοι</h2>
-      <table><thead><tr><th>Κλάδος</th><th>Περιγραφή</th><th>Σωλήνας</th><th class="r">L [m]</th><th class="r">Q [m³/h]</th><th class="r">v [m/s]</th><th class="r">R [Pa/m]</th><th class="r">ΔP [m]</th></tr></thead><tbody>${sumRows}</tbody></table>
+      <table><thead><tr><th>Κλάδος</th><th>Περιγραφή</th><th>Σωλήνας</th><th class="r">L [m]</th><th class="r">Q [m³/h]</th><th class="r">v [m/s]</th><th class="r">R [Pa/m]</th><th class="r">ΔP [mwc]</th></tr></thead><tbody>${sumRows}</tbody></table>
       ${errBox}${warnBox}
       ${pumpSec}
       <h2 class="pb">Αναλυτικά ανά κλάδο</h2>
@@ -2008,9 +2127,9 @@
     return `<div class="br">
       <div class="bh"><span class="badge">${esc(branchLabel(br))}</span><span class="bt">${esc(descOf(br))}</span>${c.complete ? "" : `<span class="ktag" style="background:#FDECEA;color:#B42318">ελλιπής: ${esc(c.missing.join(", "))}</span>`}</div>
       <div class="params">${esc(br.pipeFamily)} ${esc(br.pipeSize)} · D ${fmt(p.D_int, 2)} mm · k ${fmt(p.k, 3)} mm · L ${dbl ? `2×${esc(br.length)} = ` : ""}${fmt(p.Leff, 1)} m · Q ${fmt(c.Q, 2)} m³/h${c.Qsrc === "load" ? ` (${esc(br.loadKW)} kW)` : c.Qsrc === "auto" ? " (ισοζύγιο)" : ""}<br>v ${fmt(p.v, 3)} m/s · Re ${isFinite(p.Re) ? Math.round(p.Re) : "—"} (${esc(p.regime || "—")}) · λ ${fmt(p.lambda, 4)} · R ${fmt(p.R, 0)} Pa/m · ΔP σωλήνα ${fmt(p.dP)} m${extra || ""}</div>
-      ${fits || eqs ? `<table><thead><tr><th>Εξάρτημα / εξοπλισμός</th><th>Διατομή</th><th class="r">Τεμ.</th><th class="r">ζ</th><th class="r">Kv</th><th class="r">ΔP/τεμ [m]</th><th class="r">ΔP [m]</th></tr></thead><tbody>${fits}${eqs}</tbody></table>` : ""}
+      ${fits || eqs ? `<table><thead><tr><th>Εξάρτημα / εξοπλισμός</th><th>Διατομή</th><th class="r">Τεμ.</th><th class="r">ζ</th><th class="r">Kv</th><th class="r">ΔP/τεμ [mwc]</th><th class="r">ΔP [mwc]</th></tr></thead><tbody>${fits}${eqs}</tbody></table>` : ""}
       ${c.ctrl ? `<div class="params">Βάνα ελέγχου: authority β = ${fmt(c.ctrl.auth, 2)}</div>` : ""}
-      <p class="dpline">ΔP ${esc(branchLabel(br))} = <b>${fmt(c.dP)} m · ${kp(c.dP)} kPa</b></p>
+      <p class="dpline">ΔP ${esc(branchLabel(br))} = <b>${fmt(c.dP)} mwc · ${kp(c.dP)} kPa</b></p>
     </div>`;
   }
   function openReportNet() {
@@ -2041,8 +2160,8 @@
     const warnBox = val.warns.length ? `<div class="warnbox"><b>Παρατηρήσεις</b><ul>${val.warns.map(w => `<li>${esc(w)}</li>`).join("")}</ul></div>` : "";
     const op = res.pump.op;
     const pumpSec = res.Qd > 0 && res.base > 0 ? `<h2>Καμπύλη δικτύου${res.pump.fit ? " και αντλίας" : ""}</h2><div class="cols"><div>${pumpChart(res)}</div><div><table><tbody>
-      <tr><td>Σχεδιασμός</td><td class="r num">${fmt(res.Qd, 2)} m³/h · ${fmt(res.H, 2)} m</td></tr>
-      ${op ? `<tr><td>Σημείο λειτουργίας</td><td class="r num">${fmt(op.Q, 2)} m³/h · ${fmt(op.H, 2)} m</td></tr><tr><td>Υδραυλική ισχύς</td><td class="r num">${fmt(op.Ph, 0)} W</td></tr><tr><td>Ισχύς άξονα</td><td class="r num">${isFinite(op.Pshaft) ? fmt(op.Pshaft, 0) + " W" : "—"}</td></tr>`
+      <tr><td>Σχεδιασμός</td><td class="r num">${fmt(res.Qd, 2)} m³/h · ${fmt(res.H, 2)} mwc</td></tr>
+      ${op ? `<tr><td>Σημείο λειτουργίας</td><td class="r num">${fmt(op.Q, 2)} m³/h · ${fmt(op.H, 2)} mwc</td></tr><tr><td>Υδραυλική ισχύς</td><td class="r num">${fmt(op.Ph, 0)} W</td></tr><tr><td>Ισχύς άξονα</td><td class="r num">${isFinite(op.Pshaft) ? fmt(op.Pshaft, 0) + " W" : "—"}</td></tr>`
         : `<tr><td>Υδραυλική ισχύς (σχεδιασμός)</td><td class="r num">${fmt(res.Ph, 0)} W</td></tr>`}</tbody></table></div></div>` : "";
     const detail = res.edges.filter(x => !x.e.direct).map(x => pipeDetailHtml(x.e, x.c, fp, ` · ${nm(x.e.from)} → ${nm(x.e.to)}`)).join("");
     const theory = DB.THEORY.map(t => `<tr><td>${esc(t[0])}</td><td><code>${esc(t[1])}</code></td><td>${esc(t[2])}</td><td>${esc(t[3])}</td></tr>`).join("");
@@ -2054,16 +2173,16 @@
         <div class="meta">Ημερομηνία: <b>${esc(date)}</b><br>${m.engineer ? `Μηχανικός: <b>${esc(m.engineer)}</b><br>` : ""}Ρευστό: <b>${esc(fp.label)} · ${esc(project.waterTemp)} °C</b><br>${res.open ? "Ανοιχτό" : "Κλειστό"} κύκλωμα</div></header>
       ${res.provisional ? `<div class="prov">ΠΡΟΣΩΡΙΝΟ — λείπουν στοιχεία ή υπάρχουν σφάλματα. Ελλιπείς διαδρομές δεν περιλαμβάνονται στο H.</div>` : ""}
       <div class="kpis">
-        <div class="kpi main"><div class="l">Μανομετρικό H</div><div class="v">${fmt(res.H, 2)} m</div><div class="s">${kp(res.H)} kPa</div></div>
+        <div class="kpi main"><div class="l">Μανομετρικό H</div><div class="v">${fmt(res.H, 2)} mwc</div><div class="s">${kp(res.H)} kPa</div></div>
         <div class="kpi"><div class="l">Παροχή αντλίας</div><div class="v">${fmt(res.Qd, 2)} m³/h</div><div class="s">${fmt(res.Qd / 3.6, 3)} l/s</div></div>
         <div class="kpi"><div class="l">Υδραυλική ισχύς</div><div class="v">${fmt(res.Ph, 0)} W</div><div class="s">ρ·g·Q·H</div></div>
         <div class="kpi"><div class="l">Ρευστό</div><div class="v" style="font-size:10pt">${esc(fp.label)}</div><div class="s">ν ${fmt(fp.nu * 1e6, 3)}e-6 · ρ ${fmt(fp.rho, 0)}${project.aged ? " · παλαιό δίκτυο" : ""}</div></div>
       </div>
       <h2>Σχέδιο δικτύου</h2>${schematicNet(res, false, 680).svg}
-      <h2>Σχηματισμός H</h2><table><thead><tr><th></th><th class="r">m</th><th class="r">kPa</th></tr></thead><tbody>${hRows}</tbody></table>
-      <h2>Διαδρομές</h2><table><thead><tr><th>Μέσω</th><th>Διαδρομή</th><th class="r">ΔP [m]</th><th class="r">Στραγγαλισμός [kPa]</th><th class="r">Kv εξισ.</th></tr></thead><tbody>${pathRows}</tbody></table>
-      <h2>Εξοπλισμός</h2><table><thead><tr><th>Όνομα</th><th>Τύπος</th><th class="r">Q [m³/h]</th><th class="r">ΔP [kPa]</th><th class="r">ΔP [m]</th><th></th></tr></thead><tbody>${eqRows}</tbody></table>
-      <h2>Σωλήνες</h2><table><thead><tr><th>Κωδ.</th><th>Περιγραφή</th><th>Από → προς</th><th>Σωλήνας</th><th class="r">L [m]</th><th class="r">Q [m³/h]</th><th class="r">v [m/s]</th><th class="r">R [Pa/m]</th><th class="r">ΔP [m]</th></tr></thead><tbody>${pipeRows}</tbody></table>
+      <h2>Σχηματισμός H</h2><table><thead><tr><th></th><th class="r">mwc</th><th class="r">kPa</th></tr></thead><tbody>${hRows}</tbody></table>
+      <h2>Διαδρομές</h2><table><thead><tr><th>Μέσω</th><th>Διαδρομή</th><th class="r">ΔP [mwc]</th><th class="r">Στραγγαλισμός [kPa]</th><th class="r">Kv εξισ.</th></tr></thead><tbody>${pathRows}</tbody></table>
+      <h2>Εξοπλισμός</h2><table><thead><tr><th>Όνομα</th><th>Τύπος</th><th class="r">Q [m³/h]</th><th class="r">ΔP [kPa]</th><th class="r">ΔP [mwc]</th><th></th></tr></thead><tbody>${eqRows}</tbody></table>
+      <h2>Σωλήνες</h2><table><thead><tr><th>Κωδ.</th><th>Περιγραφή</th><th>Από → προς</th><th>Σωλήνας</th><th class="r">L [m]</th><th class="r">Q [m³/h]</th><th class="r">v [m/s]</th><th class="r">R [Pa/m]</th><th class="r">ΔP [mwc]</th></tr></thead><tbody>${pipeRows}</tbody></table>
       ${errBox}${warnBox}${pumpSec}
       <h2 class="pb">Αναλυτικά ανά σωλήνα</h2>${detail}
       <h2>Παράρτημα — τύποι</h2><table><thead><tr><th>Μέγεθος</th><th>Τύπος</th><th>Μον.</th><th>Σημείωση</th></tr></thead><tbody>${theory}</tbody></table>
@@ -2100,6 +2219,7 @@
     nuWater, interp, fluidProps, lookupPipe, calcPipe, calcFitting, calcBranch,
     calcProject, validate, friction, qOf, fitPump, opPoint, normalize, vMaxFor, toKPa, toM, nextCode,
     setMode, treeOf, schematicNet, parseProjectText, calcNetwork, treeToGraph, chainToGraph, graphOf,
+    delNode, delEdge, insertOnEdge, netAdd, undo,
     setProject(p) { project = p; },
     getProject() { return project; }
   };
