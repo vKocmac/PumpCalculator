@@ -521,6 +521,20 @@ console.log("\n[16] Πολλές αντλίες: διαχωριστής, αντ�
     const rg = E.calcProject(), svg = E.schematicNet(rg, true, 900).svg;
     truthy("Σύρσιμο: ίδια H, σχέδιο χωρίς NaN, το ΚΚΜ-1 στη στήλη 9", rg.circuits.map(c => c.H).join(",") === h0 && !svg.includes("NaN") && svg.includes(`x="${60 + 9 * 290}" y="`) && E.normalize(E.getProject()).net.nodes.find(n => n.id === "k1").grid.u.c === 9);
   }
+  // Ελεύθερη θέση (px), διαδρομή σωλήνα, μέγεθος, φορά αντλίας: μόνο εμφάνιση
+  {
+    E.setProject(E.normalize(JSON.parse(JSON.stringify(global.window.DB.EXAMPLE))));
+    const h0 = E.calcProject().circuits.map(c => c.H).join(",");
+    const pr = E.getProject();
+    pr.net.nodes.find(n => n.id === "k1").grid = { u: { x: 1900, y: 90 } };
+    pr.net.nodes.find(n => n.id === "buf").size = { w: 200, h: 80 };
+    pr.net.nodes.find(n => n.id === "p3").face = "left";
+    pr.net.edges.find(e => e.id === "e12").route = { u: { y: 700 } };
+    const rg = E.calcProject(), svg = E.schematicNet(rg, true, 900).svg, pn = E.normalize(E.getProject()).net;
+    truthy("Θέση/διαδρομή/μέγεθος/φορά: ίδια H, χωρίς NaN, διαδρομή L9 στο y=700, όλα αποθηκεύονται",
+      rg.circuits.map(c => c.H).join(",") === h0 && !svg.includes("NaN") && svg.includes("V700 H") && svg.includes('width="200" height="80"')
+      && pn.nodes.find(n => n.id === "buf").size.w === 200 && pn.nodes.find(n => n.id === "p3").face === "left" && pn.edges.find(e => e.id === "e12").route.u.y === 700);
+  }
   // Μία αντλία: τίποτα δεν αλλάζει (ίδιο αποτέλεσμα με πριν) — καλύπτεται από [11] (300 τυχαία δίκτυα)
 }
 
