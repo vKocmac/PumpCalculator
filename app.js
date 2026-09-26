@@ -508,6 +508,11 @@
     .schem .plus path{stroke:#0B6FB8;stroke-width:2.2}
     .schem .plus:hover circle,.schem .plus:focus-visible circle{fill:#0B6FB8}
     .schem .plus:hover path,.schem .plus:focus-visible path{stroke:#FFFFFF}
+    .schem .delb{cursor:pointer;outline:none}
+    .schem .delb circle{fill:#FFFFFF;stroke:#B42318;stroke-width:1.6}
+    .schem .delb path{stroke:#B42318;stroke-width:2;stroke-linecap:round}
+    .schem .delb:hover circle,.schem .delb:focus-visible circle{fill:#B42318}
+    .schem .delb:hover path,.schem .delb:focus-visible path{stroke:#FFFFFF}
   </style>`;
   function layoutTree(tree) {
     const pos = new Map(); let r = 0, maxD = 0;
@@ -532,7 +537,7 @@
     const W = Math.max(availW, x0 + segW * (maxD + 1) + termW + 36), Hh = padT + rows * rowH + 8;
     const yOf = row => padT + row * rowH + rowH / 2 - 8;
     const yStart = tree.roots.length ? yOf(pos.get(tree.roots[0]).row) : yOf(0);
-    const out = [];
+    const out = [], pluses = [];
     const txt = (x, y, s, a = "") => `<text x="${x}" y="${y}" ${a}>${esc(s)}</text>`;
     const st = project.start;
     out.push(`<g class="startnode">
@@ -544,8 +549,7 @@
     out.push(`<line x1="${boxX + boxW}" y1="${yStart}" x2="${pumpX - 13}" y2="${yStart}" class="ln-trunk"/>`);
     out.push(`<g class="pump"><title>Αντλία — σε κλειστό βρόχο η θέση της δεν αλλάζει το H</title><circle cx="${pumpX}" cy="${yStart}" r="13" class="pc"/><path d="M${pumpX - 5} ${yStart - 7} L${pumpX + 8} ${yStart} L${pumpX - 5} ${yStart + 7} Z" class="pt"/></g>`);
     out.push(`<line x1="${pumpX + 13}" y1="${yStart}" x2="${x0}" y2="${yStart}" class="ln-trunk"/>`);
-    if (tree.roots.length > 1) out.push(`<circle cx="${x0}" cy="${yStart}" r="5" class="junc"/>`);
-    if (interactive) out.push(plusBtn(boxX + boxW - 4, yStart - 32, "__start", "Νέος κλάδος από την αρχή"));
+    out.push(`<circle cx="${x0}" cy="${yStart}" r="5" class="junc"/>`);
 
     tree.order.forEach(id => {
       const p = pos.get(id); if (!p) return;
@@ -575,6 +579,7 @@
         <text x="${lx + 19}" y="${y + 22}" class="${c.complete ? "t-num" : "t-miss"}">${esc(trunc(lower, maxChars - 2))}</text>
         ${third ? `<text x="${lx + 19}" y="${y + 37}" class="t-q">${esc(third)}</text>` : ""}
       </g>`);
+      if (sel) out.push(`<g class="delb" data-act="del" data-id="${esc(id)}" role="button" tabindex="0" aria-label="Διαγραφή ${esc(code)}"><title>Διαγραφή ${esc(code)}</title><circle cx="${xe - 16}" cy="${y + 18}" r="9"/><path d="M${xe - 19.5} ${y + 14.5}l7 7M${xe - 12.5} ${y + 14.5}l-7 7"/></g>`);
       if (ks.length) out.push(`<circle cx="${xe}" cy="${y}" r="5" class="junc"/>`);
       let plusX = xe + 20, plusY = y;
       if (!ks.length) {
@@ -586,8 +591,10 @@
           plusX = xe + termW - 4;
         } else out.push(`<circle cx="${xe}" cy="${y}" r="4" class="endcap"/>`);
       } else { plusX = xe; plusY = y - 26; }
-      if (interactive) out.push(plusBtn(plusX, plusY, id, `Προσθήκη μετά τον ${code}`));
+      if (interactive) pluses.push(plusBtn(plusX, plusY, id, `Νέος κλάδος από το τέλος του ${code}`));
     });
+    if (interactive) pluses.unshift(plusBtn(x0, yStart - 24, "__start", "Νέος κλάδος από την αρχή"));
+    out.push(...pluses);
     return { svg: `<svg class="schem" width="${W}" height="${Hh}" viewBox="0 0 ${W} ${Hh}" role="img" aria-label="Σχηματικό δικτύου">${SCHEM_STYLE}${out.join("")}</svg>`, W, H: Hh };
   }
   function plusBtn(x, y, id, label) {
@@ -650,7 +657,7 @@
           </div>
         </div>
         <p class="lead">${net
-          ? "Ο βρόχος της αντλίας που υπολογίζεις. Πάτα έναν κλάδο για να τον συμπληρώσεις, ή το <b>+</b> στο τέλος του για συνέχεια, παράλληλο κλάδο ή εξοπλισμό. Σε κλειστό βρόχο η θέση της αντλίας δεν αλλάζει το H."
+          ? "Ο βρόχος της αντλίας που υπολογίζεις. Πάτα έναν κλάδο για να τον συμπληρώσεις. Το <b>+</b> είναι σημείο του δικτύου: νέος κλάδος ξεκινά από εκεί — αν από το ίδιο σημείο ξεκινά ήδη κλάδος, ο νέος είναι παράλληλος. Ο επιλεγμένος κλάδος σβήνεται με το <b class='x'>✕</b>. Σε κλειστό βρόχο η θέση της αντλίας δεν αλλάζει το H."
           : "Κλάδοι σε σειρά, από την αρχή του βρόχου ως το δυσμενέστερο τερματικό. Όλοι αθροίζονται. Για παράλληλους κλάδους διάλεξε «Δίκτυο με διακλαδώσεις»."}</p>
         <div class="startrow">
           ${field("Αρχή βρόχου", `<select data-start="type">${startOpts}</select>`)}
@@ -868,18 +875,17 @@
     const el = $("#pop"); if (!el) return;
     if (!pop || (pop.id !== "__start" && !res.cById.has(pop.id))) { el.hidden = true; el.innerHTML = ""; return; }
     let html;
+    const lbls = ids => ids.map(id => esc(branchLabel(res.tree.byId.get(id)))).join(", ");
     if (pop.id === "__start") {
+      const rs = res.tree.roots;
       html = `<div class="pop-h">Αρχή βρόχου</div>
-        <button data-act="add-root"><b>Νέος κλάδος</b><small>ξεκινά από την αρχή, παράλληλα με τους υπόλοιπους</small></button>
+        <button data-act="add-root"><b>Νέος κλάδος από εδώ</b><small>${rs.length ? `παράλληλος με ${lbls(rs)}` : "πρώτος κλάδος του βρόχου"}</small></button>
         <button data-act="start-eq"><b>ΔP της αρχής</b><small>${esc(project.start.type)} — αν ο βρόχος περνά από μέσα</small></button>`;
     } else {
-      const b = res.cById.get(pop.id).br, c = esc(branchLabel(b));
-      const par = b.parent ? "το τέλος του " + branchLabel(res.tree.byId.get(b.parent)) : "την αρχή";
-      html = `<div class="pop-h">Κλάδος ${c}</div>
-        <button data-act="add-after" data-id="${esc(b.id)}"><b>Συνέχεια</b><small>νέος κλάδος μετά τον ${c}</small></button>
-        <button data-act="add-par" data-id="${esc(b.id)}"><b>Παράλληλος</b><small>νέος κλάδος από ${esc(par)}, δίπλα στον ${c}</small></button>
-        <button data-act="add-eq" data-id="${esc(b.id)}"><b>Εξοπλισμός</b><small>FCU, στοιχείο, εναλλάκτης στο τέλος του ${c}</small></button>
-        <button data-act="del" data-id="${esc(b.id)}" class="danger"><b>Διαγραφή ${c}</b></button>`;
+      const b = res.cById.get(pop.id).br, c = esc(branchLabel(b)), ks = res.tree.kids.get(b.id) || [];
+      html = `<div class="pop-h">Τέλος του ${c}</div>
+        <button data-act="add-after" data-id="${esc(b.id)}"><b>Νέος κλάδος από εδώ</b><small>${ks.length ? `παράλληλος με ${lbls(ks)} (ξεκινούν από το ίδιο σημείο)` : `συνέχεια του ${c}`}</small></button>
+        <button data-act="add-eq" data-id="${esc(b.id)}"><b>Εξοπλισμός στο τέλος του ${c}</b><small>FCU, στοιχείο, εναλλάκτης — σε σειρά με τον ${c}</small></button>`;
     }
     el.innerHTML = html;
     const wrap = $("#schemWrap"), outer = $("#schemOuter");
@@ -1066,11 +1072,12 @@
 
   /* ---------------- EVENTS ---------------- */
   function curBranch() { return project.branches.find(b => b.id === selId); }
+  /* Ο νέος κλάδος επιλέγεται αλλά η οθόνη μένει εκεί που είσαι: στήνεις πρώτα
+     το δίκτυο και τον συμπληρώνεις μετά (μένει κόκκινος ως τότε). */
   function addBranch(parentId, like) {
     const b = blankBranch(parentId, like);
     project.branches.push(b); selId = b.id; pop = null;
-    render(); scrollToEl("#sec-branch");
-    const d = $("#sec-branch [data-br='desc']"); if (d) d.focus({ preventScroll: true });
+    render();
   }
 
   function onInput(e) {
@@ -1137,7 +1144,6 @@
       renderPop(calcProject()); return;
     }
     if (a === "add-after") { addBranch(id, project.branches.find(b => b.id === id)); return; }
-    if (a === "add-par") { const b = project.branches.find(x => x.id === id); addBranch(b ? b.parent : null, b); return; }
     if (a === "add-root") { addBranch(null, project.branches[0]); return; }
     if (a === "add-end") { const last = project.branches[project.branches.length - 1]; addBranch(last ? last.id : null, last); return; }
     if (a === "add-eq") {
@@ -1167,6 +1173,7 @@
   function onKey(e) {
     if (e.key === "Escape" && pop) { pop = null; renderPop(calcProject()); return; }
     const t = e.target;
+    if ((e.key === "Delete") && t && t.classList && t.classList.contains("seg") && t.dataset.id) { e.preventDefault(); delBranch(t.dataset.id); return; }
     if ((e.key === "Enter" || e.key === " ") && t && t.getAttribute && t.getAttribute("role") === "button" && t.tagName !== "BUTTON") {
       e.preventDefault(); t.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     }
