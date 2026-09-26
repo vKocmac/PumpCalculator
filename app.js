@@ -1116,8 +1116,13 @@
     while ((m = re.exec(d))) { const c = m[1], a = +m[2], b = m[3] !== undefined ? +m[3] : NaN; if (c === "M" || c === "L") { x = a; y = b; } else if (c === "H") x = a; else y = a; P.push({ x, y }); }
     return P;
   }
+  function simplifyPoly(P) {
+    const Q = [];
+    P.forEach(p => { const l = Q[Q.length - 1]; if (!l || l.x !== p.x || l.y !== p.y) Q.push({ x: p.x, y: p.y }); });
+    for (let i = Q.length - 2; i >= 1; i--) { const a = Q[i - 1], b = Q[i], c = Q[i + 1]; if ((a.x === b.x && b.x === c.x) || (a.y === b.y && b.y === c.y)) Q.splice(i, 1); }
+    return Q;
+  }
   function nodeHalf(n) { return n.type === PUMP ? 20 : n.type === "junction" ? 7 : n.size && n.size.w > 0 ? n.size.w / 2 : 68; }
-  function boxHH(n) { return n.type === PUMP ? 20 : n.type === "junction" ? 7 : n.size && n.size.h > 0 ? n.size.h / 2 : 27; }
   /* Διάταξη: στήλες = μεγαλύτερη απόσταση από την αρχή. Οι ακμές που γυρίζουν πίσω
      (επιστροφή στην αντλία ή στον διαχωριστή) βρίσκονται με DFS και σχεδιάζονται από κάτω. */
   function layoutNet(res) {
@@ -1246,7 +1251,7 @@
     const X = id => pos.has(id) ? pos.get(id).x : autoX(id), Y = id => pos.has(id) ? pos.get(id).y : autoY(id), dY = id => Y(id) - autoY(id);
     const nBack = net.edges.filter(e => back.has(e.id) && e.from !== e.to && !isR(e.from) && !isR(e.to)).length;
     let xMax = padL + maxL * colW + 70, yMax = padT + (rows - 1) * rowH + 30;
-    net.nodes.forEach(n => { xMax = Math.max(xMax, X(n.id) + nodeHalf(n) + 20); yMax = Math.max(yMax, Y(n.id) + (four.has(n.id) ? rowH : 0) + boxHH(n) + 10); });
+    net.nodes.forEach(n => { xMax = Math.max(xMax, X(n.id) + nodeHalf(n) + 20); yMax = Math.max(yMax, Y(n.id) - 27 + Math.max(n.size && n.size.h > 0 ? n.size.h : 54, four.has(n.id) ? rowH + 54 : 0) + 10); });
     const W = Math.max(availW, xMax + 80), H = yMax + 56 + nBack * 18;
     // Προβολή: όλο το δίκτυο ή μία αντλία
     const view = res.view !== "all" && res.act ? res.act : null;
@@ -1288,7 +1293,15 @@
     let bi = 0;
     const dropN = new Map(), upN = new Map();
     const cellTaken = (L, r) => net.nodes.some(m => layer.get(m.id) === L && row.get(m.id) === r);
-    const bottomOf = n => { const sp = span.get(n.id), yb = four.has(n.id) ? Y(n.id) + rowH : sp ? sp[1] : Y(n.id); return yb + (n.type === PUMP ? 20 : n.type === "junction" ? 8 : boxHH(n)); };
+    // Κουτιά: η πάνω πλευρά σταθερή (οι σωλήνες μπαίνουν 27 px κάτω από αυτήν), ύψος ελεύθερο
+    const fourDrop = n => (n.size && n.size.h > 0 ? Math.max(94, n.size.h) : rowH + 54) - 54;
+    const boxBox = n => {
+      const sp = span.get(n.id), y = Y(n.id), top = sp ? sp[0] : y;
+      if (four.has(n.id)) return [y - 27, fourDrop(n) + 54];
+      const hDef = (sp ? sp[1] - sp[0] : 0) + 54, hs = n.size && n.size.h > 0 ? n.size.h : 0;
+      return [top - 27, hs ? (sp ? Math.max(hDef, hs) : Math.max(44, hs)) : hDef];
+    };
+    const bottomOf = n => { if (n.type === PUMP) return Y(n.id) + 20; if (n.type === "junction") { const sp = span.get(n.id); return (sp ? sp[1] : Y(n.id)) + 8; } const b = boxBox(n); return b[0] + b[1]; };
     const landY = e => land.has(e.id) ? Yr(land.get(e.id)) + dY(e.to) : Y(e.to);
     const intoPumpLeft = (v, xv, yv, k) => ` H${xv - 42 - 8 * k} V${yv} H${xv - 20}`;
     const rowsBetween = (L0, L1, r) => net.nodes.some(m => { const L = layer.get(m.id); return L > L0 && L < L1 && row.get(m.id) === r; });
@@ -1302,12 +1315,12 @@
       } else if (four.has(e.to) && port(e.id, e.to) === "sIn") {
         // Επιστροφή δευτερεύοντος → κάτω δεξιό στόμιο
         const k = upN.get(e.to) || 0; upN.set(e.to, k + 1);
-        const xp = xv + hv, yp = yv + rowH, xm = xp + 18 + 8 * k;
+        const xp = xv + hv, yp = yv + fourDrop(v), xm = xp + 18 + 8 * k;
         const xs = isR(e.from) || xu > xp ? xu - hu : xu + hu;
         d = `M${xs} ${yu} H${xm} V${yp} H${xp}`; seg = Math.abs(yu - yp) < 1 ? [Math.min(xp, xs), Math.max(xp, xs), yp] : [Math.min(xm, xs), Math.max(xm, xs), yu]; dir = xm < xs ? -1 : 1;
       } else if (four.has(e.from) && port(e.id, e.from) === "pOut") {
         // Κάτω αριστερό στόμιο → πίσω στην αντλία / την παραγωγή
-        const k = bi++, xp = xu - hu, r1 = row.get(e.from) + 1, y1 = yu + rowH;
+        const k = bi++, xp = xu - hu, r1 = row.get(e.from) + 1, y1 = yu + fourDrop(u);
         const yp = !pos.has(e.from) && rowsBetween(layer.get(e.to) - 1, layer.get(e.from), r1) ? yMax + 36 + k * 18 : y1;
         if (yp !== y1) d = `M${xp} ${y1} H${xp - 16} V${yp}`; else d = `M${xp} ${yp}`;
         if (v.type === PUMP) { d += ` H${xv - 42 - 8 * k} V${yv} H${xv - hv}`; seg = [xv - 42, yp === y1 ? xp : xp - 16, yp]; }
@@ -1357,16 +1370,28 @@
       else if (yv > yu) { const ex = xu + hu + 18; d = `M${xu} ${yu} H${ex} V${yv} H${xv}`; seg = [ex, xv - hv, yv]; }
       else { const ex = xv - hv - 18; d = `M${xu} ${yu} H${ex} V${yv} H${xv}`; seg = [xu + hu, ex, yu]; }
       const rt = e.route && e.route[mk];
-      if (rt && isFinite(rt.y) && e.from !== e.to) {
-        // Διαδρομή που όρισε ο χρήστης: ίδια άκρα, οριζόντιο τμήμα στο ύψος που τον έσυρε
-        const P = pathPts(d), p0 = P[0], p1 = P[1] || P[0], pn = P[P.length - 1], pm = P[P.length - 2] || p0;
-        const u0 = { x: Math.sign(p1.x - p0.x), y: Math.sign(p1.y - p0.y) }, u1 = { x: Math.sign(pn.x - pm.x), y: Math.sign(pn.y - pm.y) };
-        const A = { x: p0.x + u0.x * 16, y: p0.y + u0.y * 16 }, B = { x: pn.x - u1.x * 16, y: pn.y - u1.y * 16 };
-        d = `M${p0.x} ${p0.y} L${A.x} ${A.y} V${rt.y} H${B.x} V${B.y} L${pn.x} ${pn.y}`;
-        seg = [Math.min(A.x, B.x), Math.max(A.x, B.x), rt.y]; dir = B.x < A.x ? -1 : 1;
+      let poly = pathPts(d);
+      if (rt && e.from !== e.to) {
+        // Διαδρομή που όρισε ο χρήστης: ίδια άκρα (στα σημεία), ενδιάμεσα σημεία όπως τα έσυρε
+        const p0 = poly[0], pn = poly[poly.length - 1];
+        let mid = null;
+        if (Array.isArray(rt.pts) && rt.pts.length) mid = rt.pts.map(q => ({ x: +q[0], y: +q[1] }));
+        else if (isFinite(rt.y)) {
+          const p1 = poly[1] || p0, pm = poly[poly.length - 2] || p0;
+          const A = { x: p0.x + Math.sign(p1.x - p0.x) * 16, y: p0.y + Math.sign(p1.y - p0.y) * 16 }, B = { x: pn.x - Math.sign(pn.x - pm.x) * 16, y: pn.y - Math.sign(pn.y - pm.y) * 16 };
+          mid = [A, { x: A.x, y: rt.y }, { x: B.x, y: rt.y }, B];
+        }
+        if (mid) {
+          const f = mid[0], l = mid[mid.length - 1];
+          poly = simplifyPoly([p0, ...(f.x !== p0.x && f.y !== p0.y ? [{ x: f.x, y: p0.y }] : []), ...mid, ...(l.x !== pn.x && l.y !== pn.y ? [{ x: l.x, y: pn.y }] : []), pn]);
+          d = "M" + poly.map(q => `${q.x} ${q.y}`).join(" L");
+          let best = null;
+          for (let i = 0; i + 1 < poly.length; i++) { const a = poly[i], b = poly[i + 1]; if (a.y === b.y && (!best || Math.abs(b.x - a.x) > best.len)) best = { len: Math.abs(b.x - a.x), a, b }; }
+          if (best) { seg = [Math.min(best.a.x, best.b.x), Math.max(best.a.x, best.b.x), best.a.y]; dir = best.b.x < best.a.x ? -1 : 1; }
+        }
       }
       const [s1, s2, sy] = seg;
-      geoE.set(e.id, { sy });
+      geoE.set(e.id, { sy, pts: poly });
       // Επιστροφή από τερματική: ετικέτα κοντά στο σημείο που καταλήγει (εκεί δεν περνούν άλλες κατακόρυφες)
       const nearEnd = !isR(e.from) && isR(e.to) && dir < 0 && Math.abs(s2 - s1) > 300;
       const len = nearEnd ? 260 : Math.abs(s2 - s1), mx = nearEnd ? s1 + 130 : (s1 + s2) / 2;
@@ -1416,7 +1441,7 @@
         body += !(n.label || "").trim() || /^Κόμβος \d+$/.test(nodeLabel(n)) ? `<title>${esc(nodeLabel(n))}</title>` : txt(x, bot + 24, trunc(nodeLabel(n), 16), 'class="t-small" text-anchor="middle"');
         px = x + 12; py = top - 16; vx = x - 20; vy = top - 22;
       } else if (four.has(n.id)) {
-        const dp = nc && nc.m > 0 ? `ΔP ${fmt(nc.m, 2)} mwc` : "ΔP —", y0 = y - 27, yb = y + rowH, h = rowH + 54;
+        const dp = nc && nc.m > 0 ? `ΔP ${fmt(nc.m, 2)} mwc` : "ΔP —", y0 = y - 27, yb = y + fourDrop(n), h = fourDrop(n) + 54;
         const P = portsOf(res, n);
         const pm = (px0, py0, list, dir, lbl, anchor) => {
           const tx = `<text x="${px0 + (anchor === "start" ? 10 : -10)}" y="${py0 < yb ? py0 + 36 : py0 - 8}" text-anchor="${anchor}" class="t-port">${lbl}</text>`;
@@ -1433,11 +1458,11 @@
           ${pm(x - hw, y, P.pIn, "in", "από παραγωγή", "start")}${pm(x - hw, yb, P.pOut, "out", "προς παραγωγή", "start")}
           ${pm(x + hw, y, P.sOut, "out", "προσαγωγή", "end")}${pm(x + hw, yb, P.sIn, "in", "επιστροφή", "end")}`;
         px = x + hw + 2; py = y0 - 2; vx = x - hw + 12; vy = y0 - 14;
-        if (sel) PL.push(`<rect class="rsz" data-rsz="${esc(n.id)}" x="${x + hw - 6}" y="${y0 + h - 6}" width="12" height="12" rx="2"><title>Σύρε για πλάτος</title></rect>`);
+        if (sel) PL.push(`<rect class="rsz" data-rsz="${esc(n.id)}" x="${x + hw - 6}" y="${y0 + h - 6}" width="12" height="12" rx="2"><title>Σύρε για μέγεθος</title></rect>`);
         geoN.set(n.id, { x, y, hw, top: y0, bot: y0 + h, four: true });
       } else {
         const dp = nc && nc.m > 0 ? `ΔP ${fmt(nc.m, 2)} mwc` : t.dp ? "ΔP —" : "";
-        const hh = boxHH(n), y0 = top - hh, h = bot - top + 2 * hh;
+        const [y0, h] = boxBox(n);
         body = `${sel ? `<rect x="${x - hw - 4}" y="${y0 - 4}" width="${2 * hw + 8}" height="${h + 8}" rx="12" class="nhalo"/>` : ""}
           <rect x="${x - hw}" y="${y0}" width="${2 * hw}" height="${h}" rx="9" class="nbox ${err ? "nerr" : warn ? "nwarn" : worstNodes.has(n.id) ? "worst" : ""}"/>
           ${txt(x, y0 + 16, t.short.toUpperCase(), 'class="t-cap" text-anchor="middle"')}
@@ -1764,7 +1789,7 @@
             </div>
           </div>
         </div>
-        <p class="lead">Στήσε το κύκλωμα ξεκινώντας από την αντλία. Πάτα το <b>+</b> ενός σημείου: νέος σωλήνας προς νέο εξοπλισμό, ή σωλήνας προς υπάρχον σημείο — ${open ? "σε <b>ανοιχτό κύκλωμα</b> σημείο χωρίς συνέχεια είναι ανοιχτό άκρο (π.χ. πύργος, δεξαμενή)" : "έτσι κλείνει το κύκλωμα πίσω στην αντλία"}. Πάτα έναν σωλήνα ή εξοπλισμό για τα στοιχεία του. <b>Σύρε</b> σημείο για να το μετακινήσεις, σωλήνα για να τον ανεβάσεις ή κατεβάσεις, τη γωνία επιλεγμένου στοιχείου για μέγεθος — οι συνδέσεις μένουν. Στο + υπάρχει και «Είσοδος» (σωλήνας προς το σημείο, π.χ. δεύτερος ψύκτης σε συλλέκτη). Μετά από διαχωριστή ή buffer βάλε δική του αντλία — κάθε αντλία βγαίνει με το δικό της H.</p>
+        <p class="lead">Στήσε το κύκλωμα ξεκινώντας από την αντλία. Πάτα το <b>+</b> ενός σημείου: νέος σωλήνας προς νέο εξοπλισμό, ή σωλήνας προς υπάρχον σημείο — ${open ? "σε <b>ανοιχτό κύκλωμα</b> σημείο χωρίς συνέχεια είναι ανοιχτό άκρο (π.χ. πύργος, δεξαμενή)" : "έτσι κλείνει το κύκλωμα πίσω στην αντλία"}. Πάτα έναν σωλήνα ή εξοπλισμό για τα στοιχεία του. <b>Σύρε</b> σημείο για να το μετακινήσεις, οποιοδήποτε τμήμα σωλήνα (οριζόντιο πάνω–κάτω, κατακόρυφο δεξιά–αριστερά), τη γωνία επιλεγμένου στοιχείου για πλάτος και ύψος — οι συνδέσεις μένουν. Στο + υπάρχει και «Είσοδος» (σωλήνας προς το σημείο, π.χ. δεύτερος ψύκτης σε συλλέκτη). Μετά από διαχωριστή ή buffer βάλε δική του αντλία — κάθε αντλία βγαίνει με το δικό της H.</p>
         <div class="netstatus" id="netStatus"></div>
         <div class="schem-outer" id="schemOuter"><div class="schem-wrap" id="schemWrap"><div id="schem"></div></div><div id="pop" class="pop" hidden></div></div>
         <div class="legend">
@@ -2452,7 +2477,19 @@
       const nd = e.target.closest("#schem g.nd");
       if (nd) { const me = schemGeom.nodes.get(nd.dataset.id); if (me) drag = { kind: "node", id: nd.dataset.id, el: nd, me, x0: e.clientX, y0: e.clientY, moved: false }; return; }
       const sg = e.target.closest("#schem g.seg");
-      if (sg) { const ge = schemGeom.edges.get(sg.dataset.id); if (ge) drag = { kind: "edge", id: sg.dataset.id, el: sg, ge, x0: e.clientX, y0: e.clientY, moved: false }; }
+      if (sg) {
+        const ge = schemGeom.edges.get(sg.dataset.id), svg = sg.ownerSVGElement; if (!ge || !svg || !ge.pts || ge.pts.length < 2) return;
+        const r = svg.getBoundingClientRect(), px = (e.clientX - r.left) / netZoom, py = (e.clientY - r.top) / netZoom;
+        // Το τμήμα του σωλήνα που έπιασες
+        let best = -1, bd = Infinity;
+        for (let i = 0; i + 1 < ge.pts.length; i++) {
+          const a = ge.pts[i], b = ge.pts[i + 1], t = Math.max(0, Math.min(1, ((px - a.x) * (b.x - a.x) + (py - a.y) * (b.y - a.y)) / (((b.x - a.x) ** 2 + (b.y - a.y) ** 2) || 1)));
+          const dd = Math.hypot(px - (a.x + t * (b.x - a.x)), py - (a.y + t * (b.y - a.y))); if (dd < bd) { bd = dd; best = i; }
+        }
+        if (best < 0) return;
+        const a = ge.pts[best], b = ge.pts[best + 1];
+        drag = { kind: "edge", id: sg.dataset.id, el: sg, pts: ge.pts, i: best, horiz: a.y === b.y, x0: e.clientX, y0: e.clientY, moved: false };
+      }
     });
     document.addEventListener("pointermove", e => {
       if (!drag) return;
@@ -2477,18 +2514,24 @@
         drag.ghost.setAttribute("x", x - me.hw); drag.ghost.setAttribute("y", y + (me.top - me.y)); drag.ghost.setAttribute("width", 2 * me.hw); drag.ghost.setAttribute("height", me.bot - me.top);
         drag.ghost.setAttribute("class", "ghost" + (busy ? " busy" : ""));
       } else if (drag.kind === "edge") {
-        let y = drag.ge.sy + dy;
-        const my = magnet(y, [...G.nodes.values()].map(o => o.y), 10);
-        y = my !== null ? my : snapTo(y, G.padT, G.rowH / 8);
-        drag.to = { y };
-        drag.el.setAttribute("transform", `translate(0 ${y - drag.ge.sy})`);
+        // Οριζόντιο τμήμα → πάνω/κάτω, κατακόρυφο → δεξιά/αριστερά· τα γειτονικά τμήματα προσαρμόζονται
+        const a = drag.pts[drag.i], b = drag.pts[drag.i + 1];
+        let v;
+        if (drag.horiz) { v = a.y + dy; const m = magnet(v, [...G.nodes.values()].map(o => o.y), 10); v = m !== null ? m : snapTo(v, G.padT, G.rowH / 8); }
+        else { v = a.x + dx; const m = magnet(v, [...G.nodes.values()].flatMap(o => [o.x, o.x - o.hw - 16, o.x + o.hw + 16]), 10); v = m !== null ? m : snapTo(v, G.padL, G.colW / 16); }
+        const a2 = drag.horiz ? { x: a.x, y: v } : { x: v, y: a.y }, b2 = drag.horiz ? { x: b.x, y: v } : { x: v, y: b.y };
+        const P = simplifyPoly([...drag.pts.slice(0, drag.i + 1), a2, b2, ...drag.pts.slice(drag.i + 1)]);
+        drag.to = { pts: P };
+        const dstr = "M" + P.map(q => `${q.x} ${q.y}`).join(" L");
+        drag.el.querySelectorAll("path:not(.arr)").forEach(pth => pth.setAttribute("d", dstr));
       } else {
-        const me = drag.me, px = me.x + me.hw + dx, py = me.bot + dy;
-        const w = Math.max(100, Math.min(420, Math.round(2 * (px - me.x) / 10) * 10));
-        const h = me.four ? me.bot - me.top : Math.max(44, Math.min(320, Math.round(2 * (py - me.y) / 10) * 10));
-        const top = me.four ? me.top : me.y - h / 2, busy = overlaps(drag.id, me.x, me.y, { x: me.x, y: me.y, hw: w / 2, top, bot: top + h });
-        drag.to = busy ? null : { w, h };
-        drag.ghost.setAttribute("x", me.x - w / 2); drag.ghost.setAttribute("y", top); drag.ghost.setAttribute("width", w); drag.ghost.setAttribute("height", h); drag.ghost.setAttribute("class", "ghost" + (busy ? " busy" : ""));
+        // Η πάνω αριστερή γωνία μένει σταθερή· πλάτος και ύψος ελεύθερα
+        const me = drag.me, left = me.x - me.hw, top = me.top;
+        const w = Math.max(100, Math.min(460, Math.round((me.x + me.hw + dx - left) / 10) * 10));
+        const h = Math.max(me.four ? 94 : 44, Math.min(420, Math.round((me.bot + dy - top) / 10) * 10));
+        const cx = left + w / 2, busy = overlaps(drag.id, cx, me.y, { x: cx, y: me.y, hw: w / 2, top, bot: top + h });
+        drag.to = busy ? null : { w, h, cx };
+        drag.ghost.setAttribute("x", left); drag.ghost.setAttribute("y", top); drag.ghost.setAttribute("width", w); drag.ghost.setAttribute("height", h); drag.ghost.setAttribute("class", "ghost" + (busy ? " busy" : ""));
       }
     }, { passive: false });
     document.addEventListener("pointerup", () => {
@@ -2504,11 +2547,13 @@
         toast(`Μετακινήθηκε: ${nodeLabel(n)}. Οι σωλήνες ακολουθούν.`, true);
       } else if (d.kind === "edge") {
         const e2 = project.net.edges.find(x => x.id === d.id); if (!e2 || !d.to) { renderSchematic(calcProject()); return; }
-        snap(); e2.route = { ...(e2.route || {}), [mk]: { y: Math.round(d.to.y) } }; render();
+        snap(); e2.route = { ...(e2.route || {}), [mk]: { pts: d.to.pts.slice(1, -1).map(q => [Math.round(q.x), Math.round(q.y)]) } }; render();
         toast(`Μετακινήθηκε ο ${edgeLabel(e2)}.`, true);
       } else {
         const n = project.net.nodes.find(x => x.id === d.id); if (!n || !d.to) { toast("Το νέο μέγεθος πέφτει πάνω σε άλλο σημείο."); renderSchematic(calcProject()); return; }
-        snap(); n.size = d.me.four ? { w: d.to.w } : { w: d.to.w, h: d.to.h }; render();
+        snap(); n.size = { w: d.to.w, h: d.to.h };
+        if (Math.abs(d.to.cx - d.me.x) > 0.5) n.grid = { ...(n.grid || {}), [mk]: { x: Math.round(d.to.cx), y: Math.round(d.me.y) } };
+        render();
       }
     });
     document.addEventListener("click", e => { if (Date.now() < noClickUntil) { e.stopPropagation(); e.preventDefault(); } }, true);
@@ -2867,6 +2912,7 @@
     calcProject, validate, friction, qOf, fitPump, opPoint, normalize, vMaxFor, toKPa, toM, nextCode,
     setMode, treeOf, schematicNet, parseProjectText, calcNetwork, treeToGraph, chainToGraph, graphOf,
     delNode, delEdge, insertOnEdge, netAdd, undo,
+    geometry() { return schemGeom; },
     setProject(p) { project = p; },
     getProject() { return project; }
   };
