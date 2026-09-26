@@ -440,3 +440,4 @@ body.net-full.drawer-open #c-net { right: min(610px, 100vw); }
 .port.ok { border-color: #BFE3CB; }
 .port.miss { border-style: dashed; border-color: #F3D9A4; background: var(--warn-soft); }
 .pop .port button, .port button { width: auto; min-height: 26px; padding: 2px 8px; margin-top: 2px; font-size: 0.76rem; font-weight: 600; border: 1px solid var(--accent); border-radius: 6px; background: #FFFFFF; color: var(--accent-ink); display: inline-flex; }
+.lg-ret { width: 22px; height: 0; border-top: 4px dashed #7C3AED; }
