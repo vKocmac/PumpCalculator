@@ -112,3 +112,7 @@ node tests/test_engine.js
 ---
 **Links:** [[memory]] · Πηγή λογικής: `Υπολογισμός Κυκλοφορητών — Generic Template.xlsx` ·
 Εμφάνιση: vKocmac/LoadCalculator (`design/DESIGN.md`)
+
+## Έγγραφα
+- `docs/TODO.md` — τι λείπει / παραδοχές / επόμενα βήματα
+- `docs/linkedin-post.md` — υλικό για ανάρτηση
