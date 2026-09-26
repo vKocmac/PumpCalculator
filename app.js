@@ -432,7 +432,7 @@
       c.excessKPa = toKPa(c.excess, fp);
       const leaf = cById.get(c.leaf);
       const q = leaf ? leaf.c.Q : NaN;
-      c.kvReq = c.excess > 1e-6 && q > 0 ? q / Math.sqrt(c.excessKPa / 100) : NaN;
+      c.kvReq = c.excess > 1e-6 && q > 0 ? q * Math.sqrt((fp.rho / 1000) / (c.excessKPa / 100)) : NaN;   // Kv = Q·√(SG/ΔP[bar])
     });
     const startM = toM(project.start.dP, project.start.unit, fp);
     let sumExtras = isFinite(startM) ? startM : 0;
@@ -831,7 +831,7 @@
         pt.worst = pt.edges.join(",") === wKey;
         pt.excess = pt.complete && disComplete ? disMax - pt.dP : NaN;
         pt.excessKPa = toKPa(pt.excess, fp);
-        pt.kvReq = pt.excess > 1e-6 && isFinite(pt.minQ) ? pt.minQ / Math.sqrt(pt.excessKPa / 100) : NaN;
+        pt.kvReq = pt.excess > 1e-6 && isFinite(pt.minQ) ? pt.minQ * Math.sqrt((fp.rho / 1000) / (pt.excessKPa / 100)) : NaN;   // Kv = Q·√(SG/ΔP[bar])
       });
       // Τι «βλέπει» η αντλία: σημεία και σωλήνες στις διαδρομές της
       const pf = new Set([P]), pb = new Set([P]);
@@ -1112,6 +1112,17 @@
     seeds.forEach(s => { if (!state.has(s)) dfs(s); });
     net.nodes.forEach(n => { if (!state.has(n.id)) dfs(n.id); });
     const fwdOut = id => g.outE.get(id).filter(e => !back.has(e)), fwdIn = id => g.inE.get(id).filter(e => !back.has(e));
+    /* Προσαγωγή πάνω / επιστροφή κάτω: επιστροφή = ό,τι βρίσκεται μετά από τερματική μονάδα
+       και δεν οδηγεί σε άλλη τερματική (επιστροφές, συλλέκτης επιστροφής, αντλία στην επιστροφή…). */
+    const ret = new Set();
+    if (project.draw !== "line") {
+      const T = net.nodes.filter(n => nodeType(n.type).terminal).map(n => n.id);
+      const down = new Set(), up = new Set();
+      const w = (starts, nxt, set) => { const st = [...starts]; while (st.length) { const u = st.pop(); nxt(u).forEach(v => { if (!set.has(v)) { set.add(v); st.push(v); } }); } };
+      w(T, u => fwdOut(u).map(id => g.eById.get(id).to), down);
+      w(T, v => fwdIn(v).map(id => g.eById.get(id).from), up);
+      net.nodes.forEach(n => { if (down.has(n.id) && !up.has(n.id) && !T.includes(n.id)) ret.add(n.id); });
+    }
     const layer = new Map(), indeg = new Map(net.nodes.map(n => [n.id, fwdIn(n.id).length]));
     const q = net.nodes.filter(n => indeg.get(n.id) === 0).map(n => n.id);
     q.forEach(v => { const lp = lastPos.get(v); layer.set(v, v === pumps[0] || !lp || pumps.includes(v) ? 0 : lp.L); });
@@ -1120,6 +1131,12 @@
       fwdOut(u).forEach(id => { const v = g.eById.get(id).to; layer.set(v, Math.max(layer.has(v) ? layer.get(v) : 0, layer.get(u) + 1)); indeg.set(v, indeg.get(v) - 1); if (indeg.get(v) === 0) q.push(v); });
     }
     net.nodes.forEach(n => { if (!layer.has(n.id)) layer.set(n.id, 0); });
+    // Αντίστροφη επιστροφή (Tichelmann): η επιστροφή τρέχει προς την ίδια μεριά με την προσαγωγή → γραμμική διάταξη
+    if (ret.size) {
+      const tcol = v => { let L = Infinity; fwdIn(v).forEach(id => { const u = g.eById.get(id).from; if (!ret.has(u)) L = Math.min(L, layer.get(u)); }); return L; };
+      const reverse = net.edges.some(e => !back.has(e.id) && ret.has(e.from) && ret.has(e.to) && isFinite(tcol(e.from)) && isFinite(tcol(e.to)) && tcol(e.to) > tcol(e.from));
+      if (reverse) ret.clear();
+    }
     const row = new Map(), occ = new Set();
     let nextRow = 0;
     const free = (L, r) => !occ.has(L + ":" + r);
@@ -1128,7 +1145,7 @@
       let first = true;
       fwdOut(u).forEach(id => {
         const v = g.eById.get(id).to;
-        if (row.has(v)) return;
+        if (row.has(v) || ret.has(v)) return;
         let r = first && free(layer.get(v), row.get(u)) ? row.get(u) : nextRow++;
         while (!free(layer.get(v), r)) r = nextRow++;
         put(v, r); first = false;
@@ -1144,19 +1161,53 @@
       while (!free(layer.get(s), r)) r = nextRow++;
       put(s, r); visit(s);
     });
-    net.nodes.forEach(n => { if (!row.has(n.id)) { let r = nextRow++; while (!free(layer.get(n.id), r)) r = nextRow++; put(n.id, r); visit(n.id); } });
+    net.nodes.forEach(n => { if (!row.has(n.id) && !ret.has(n.id)) { let r = nextRow++; while (!free(layer.get(n.id), r)) r = nextRow++; put(n.id, r); visit(n.id); } });
+    // Επιστροφή: στήλες προς τα αριστερά, γραμμές κάτω από την προσαγωγή
+    const land = new Map(), rspan = new Map();
+    if (ret.size) {
+      let B = 0; row.forEach(r => { B = Math.max(B, r + 1); });
+      let nextR = B;
+      const indegR = new Map([...ret].map(v => [v, fwdIn(v).filter(id => ret.has(g.eById.get(id).from)).length]));
+      const q2 = [...ret].filter(v => indegR.get(v) === 0), ord = [];
+      while (q2.length) { const u = q2.shift(); ord.push(u); fwdOut(u).forEach(id => { const v = g.eById.get(id).to; if (!ret.has(v)) return; indegR.set(v, indegR.get(v) - 1); if (indegR.get(v) === 0) q2.push(v); }); }
+      [...ret].forEach(v => { if (!ord.includes(v)) ord.push(v); });
+      const rowOfSrc = id => row.has(g.eById.get(id).from) ? row.get(g.eById.get(id).from) : 0;
+      ord.forEach(v => {
+        const ins = fwdIn(v).slice().sort((a, b) => rowOfSrc(a) - rowOfSrc(b));
+        // Κάτω-αριστερά από την τερματική που τροφοδοτεί· αλλιώς μία στήλη αριστερά από την προηγούμενη επιστροφή
+        let L = Infinity;
+        ins.forEach(id => { const u = g.eById.get(id).from; if (!ret.has(u) && layer.has(u)) L = Math.min(L, layer.get(u) - 1); });
+        if (!isFinite(L)) ins.forEach(id => { const u = g.eById.get(id).from; if (layer.has(u)) L = Math.min(L, layer.get(u) - 1); });
+        L = Math.max(0, isFinite(L) ? L : 0);
+        layer.set(v, L);
+        const t = g.nById.get(v).type;
+        if (ins.length >= 2 && MANIFOLD.includes(t)) {
+          const r0 = nextR; nextR += ins.length;
+          ins.forEach((id, i) => land.set(id, r0 + i));
+          put(v, r0); rspan.set(v, [r0, r0 + ins.length - 1]);
+          for (let r = r0 + 1; r < nextR; r++) occ.add(L + ":" + r);
+        } else {
+          const fr = ins.find(id => ret.has(g.eById.get(id).from));
+          let r = fr !== undefined && free(L, row.get(g.eById.get(fr).from)) ? row.get(g.eById.get(fr).from) : nextR++;
+          while (!free(L, r)) r = nextR++;
+          put(v, r); ins.forEach(id => land.set(id, r));
+        }
+      });
+      nextRow = Math.max(nextRow, nextR);
+    }
     let maxL = 0, maxR = 0;
     layer.forEach(L => { maxL = Math.max(maxL, L); });
     row.forEach(r => { maxR = Math.max(maxR, r); });
     layer.forEach((L, id) => { if (row.has(id)) lastPos.set(id, { L, r: row.get(id) }); });
-    return { layer, row, rows: Math.max(nextRow, maxR + 1, 1), maxL, back };
+    return { layer, row, rows: Math.max(nextRow, maxR + 1, 1), maxL, back, ret, land, rspan };
   }
   function schematicNet(res, interactive, availW) {
     const g = res.g, net = project.net;
-    const { layer, row, rows, maxL, back } = layoutNet(res);
+    const { layer, row, rows, maxL, back, ret, land, rspan } = layoutNet(res);
+    const isR = id => ret.has(id);
     const colW = Math.max(290, Math.min(320, Math.floor((availW - 150) / (maxL + 1)))), rowH = 104, padT = 64, padL = 60;
     const X = id => padL + layer.get(id) * colW, Yr = r => padT + r * rowH, Y = id => Yr(row.get(id));
-    const nBack = net.edges.filter(e => back.has(e.id) && e.from !== e.to).length;
+    const nBack = net.edges.filter(e => back.has(e.id) && e.from !== e.to && !isR(e.from) && !isR(e.to)).length;
     const xMax = padL + maxL * colW + 70, yMax = padT + (rows - 1) * rowH + 30;
     const W = Math.max(availW, xMax + 80), H = yMax + 56 + nBack * 18;
     // Προβολή: όλο το δίκτυο ή μία αντλία
@@ -1168,10 +1219,11 @@
     // Συλλέκτης / κόμβος / διαχωριστής ως μπάρα που «ανοίγει» προς όλες τις αναχωρήσεις
     const span = new Map();
     net.nodes.forEach(n => {
+      if (isR(n.id)) { if (rspan.has(n.id)) span.set(n.id, rspan.get(n.id)); return; }
       if (!MANIFOLD.includes(n.type)) return;
       const L = layer.get(n.id), r = row.get(n.id); let r0 = r, r1 = r;
-      g.outE.get(n.id).forEach(id => { if (back.has(id)) return; const v = g.eById.get(id).to; if (layer.get(v) > L) { r0 = Math.min(r0, row.get(v)); r1 = Math.max(r1, row.get(v)); } });
-      g.inE.get(n.id).forEach(id => { if (back.has(id)) return; const u = g.eById.get(id).from; if (layer.get(u) < L) { r0 = Math.min(r0, row.get(u)); r1 = Math.max(r1, row.get(u)); } });
+      g.outE.get(n.id).forEach(id => { if (back.has(id)) return; const v = g.eById.get(id).to; if (isR(v)) return; if (layer.get(v) > L) { r0 = Math.min(r0, row.get(v)); r1 = Math.max(r1, row.get(v)); } });
+      g.inE.get(n.id).forEach(id => { if (back.has(id)) return; const u = g.eById.get(id).from; if (isR(u)) return; if (layer.get(u) < L) { r0 = Math.min(r0, row.get(u)); r1 = Math.max(r1, row.get(u)); } });
       if (r0 === r1) return;
       if (net.nodes.some(m => m.id !== n.id && layer.get(m.id) === L && row.get(m.id) >= r0 && row.get(m.id) <= r1)) return;
       span.set(n.id, [r0, r1]);
@@ -1183,6 +1235,9 @@
     const badge = (x, y, list) => `<g class="wb"><title>${esc(list.join("\n"))}</title><circle cx="${x}" cy="${y}" r="8"/><text x="${x}" y="${y + 3.8}" text-anchor="middle">!</text></g>`;
     netAnchors = new Map(); edgeAnchors = new Map();
     let bi = 0;
+    const dropN = new Map(), upN = new Map();
+    const cellTaken = (L, r) => net.nodes.some(m => layer.get(m.id) === L && row.get(m.id) === r);
+    const bottomOf = n => { const sp = span.get(n.id), yb = sp ? Yr(sp[1]) : Y(n.id); return yb + (n.type === PUMP ? 20 : n.type === "junction" ? 8 : 27); };
     net.edges.forEach(e => {
       const x = res.ecById.get(e.id), c = x.c;
       const u = g.nById.get(e.from), v = g.nById.get(e.to);
@@ -1190,9 +1245,38 @@
       let d, seg, dir = 1;
       if (e.from === e.to) {
         d = `M${xu} ${yu} V${yu - 44} H${xu + 60} V${yu}`; seg = [xu, xu + 60, yu - 44];
+      } else if (!isR(e.from) && isR(e.to)) {
+        // Από την προσαγωγή (τερματική μονάδα) κάτω στη γραμμή επιστροφής, προς τα αριστερά
+        const L = layer.get(e.from), k = dropN.get(L) || 0; dropN.set(L, k + 1);
+        const yl = Yr(land.has(e.id) ? land.get(e.id) : row.get(e.to)), xd = xu + hu + 14 + 9 * k, xe = xv + hv;
+        d = `M${xu} ${yu} H${xd} V${yl} H${xe}`; seg = [Math.min(xe, xd), Math.max(xe, xd), yl]; dir = xe < xd ? -1 : 1;
+      } else if (isR(e.from) && isR(e.to) && xv > xu) {
+        // Αντίστροφη επιστροφή: η επιστροφή συνεχίζει προς τα δεξιά
+        const yl = Yr(land.has(e.id) ? land.get(e.id) : row.get(e.to)), xs = xu + hu, xe = xv - hv;
+        if (Math.abs(yl - yu) < 1) { d = `M${xs} ${yu} H${xe}`; seg = [xs, xe, yu]; }
+        else { const xm = xe - 18; d = `M${xs} ${yu} H${xm} V${yl} H${xe}`; seg = [xs, xm, yu]; }
+      } else if (isR(e.from) && isR(e.to)) {
+        const yl = Yr(land.has(e.id) ? land.get(e.id) : row.get(e.to)), xs = xu - hu, xe = xv + hv;
+        if (Math.abs(yl - yu) < 1) { d = `M${xs} ${yu} H${xe}`; seg = [Math.min(xs, xe), Math.max(xs, xe), yu]; }
+        else { const xm = xe + 18; d = `M${xs} ${yu} H${xm} V${yl} H${xe}`; seg = [Math.min(xm, xs), Math.max(xm, xs), yu]; }
+        dir = xe < xs ? -1 : 1;
+      } else if (isR(e.from) && !isR(e.to)) {
+        // Από την επιστροφή πίσω στην αντλία / τον διαχωριστή: από κάτω (ή από αριστερά αν η στήλη είναι πιασμένη)
+        const k = upN.get(e.to) || 0; upN.set(e.to, k + 1);
+        const L = layer.get(e.to), rv = row.get(e.to), sp = span.get(e.to), rb = sp ? sp[1] : rv;
+        let blocked = false; for (let r = rb + 1; r < rows; r++) if (cellTaken(L, r) && !isR(net.nodes.find(m => layer.get(m.id) === L && row.get(m.id) === r).id)) blocked = true;
+        const xs = xu - hu;
+        if (!blocked) { const xt = xv + (hv > 20 ? 22 : 0) + 10 * k; d = `M${xs} ${yu} H${xt} V${bottomOf(v)}`; seg = [Math.min(xt, xs), Math.max(xt, xs), yu]; dir = xt < xs ? -1 : 1; }
+        else { const xl = xv - hv - 20 - 8 * k; d = `M${xs} ${yu} H${xl} V${yv} H${xv - hv}`; seg = [Math.min(xl, xs), Math.max(xl, xs), yu]; dir = xl < xs ? -1 : 1; }
       } else if (back.has(e.id)) {
-        const k = bi++, x1 = xu + hu + 30 + 6 * k, x2 = xv - hv - 30 - 6 * k, yB = yMax + 36 + k * 18;
-        d = `M${xu} ${yu} H${x1} V${yB} H${x2} V${yv} H${xv - hv}`; seg = [x2, x1, yB]; dir = -1;
+        // Επιστροφή μέσα στην προσαγωγή (π.χ. διαχωριστής → αντλία ψύκτη): κλείνει τοπικά, κάτω από τον βρόχο
+        const k = bi++, L0 = Math.min(layer.get(e.to), layer.get(e.from)), L1 = Math.max(layer.get(e.to), layer.get(e.from));
+        let rMax = Math.max(span.has(e.from) ? span.get(e.from)[1] : row.get(e.from), span.has(e.to) ? span.get(e.to)[1] : row.get(e.to));
+        net.nodes.forEach(m => { const L = layer.get(m.id); if (L >= L0 && L <= L1 && !isR(m.id)) rMax = Math.max(rMax, span.has(m.id) ? span.get(m.id)[1] : row.get(m.id)); });
+        const blockedBelow = net.nodes.some(m => isR(m.id) && layer.get(m.id) >= L0 && layer.get(m.id) <= L1 && row.get(m.id) <= rMax + 1);
+        const yB = (blockedBelow ? yMax + 36 : Yr(rMax) + 84) + k * 16;
+        const yu0 = bottomOf(u), yv0 = bottomOf(v), xa = xu - (hu > 20 ? 22 : 0) - 8 * k, xb = xv - (hv > 20 ? 22 : 0) - 8 * k;
+        d = `M${xa} ${yu0} V${yB} H${xb} V${yv0}`; seg = [Math.min(xa, xb), Math.max(xa, xb), yB]; dir = xb < xa ? -1 : 1;
       } else if (yv === yu) { d = `M${xu} ${yu} H${xv}`; seg = [xu + hu, xv - hv, yu]; }
       else if (inSpan(e.from, yv)) { d = `M${xu} ${yv} H${xv}`; seg = [xu + hu, xv - hv, yv]; }
       else if (inSpan(e.to, yu)) { d = `M${xu} ${yu} H${xv}`; seg = [xu + hu, xv - hv, yu]; }
@@ -1231,7 +1315,8 @@
       let body, px, py, vx, vy;
       if (n.type === PUMP) {
         const c = (res.circuits || []).find(k => k.pumpId === n.id);
-        body = `${sel ? `<circle cx="${x}" cy="${y}" r="25" class="nhalo"/>` : ""}<circle cx="${x}" cy="${y}" r="20" class="nbox ${err ? "nerr" : ""}"/><path d="M${x - 7} ${y - 10} L${x + 11} ${y} L${x - 7} ${y + 10} Z" class="pt"/>
+        const tri = isR(n.id) ? `M${x + 7} ${y - 10} L${x - 11} ${y} L${x + 7} ${y + 10} Z` : `M${x - 7} ${y - 10} L${x + 11} ${y} L${x - 7} ${y + 10} Z`;
+        body = `${sel ? `<circle cx="${x}" cy="${y}" r="25" class="nhalo"/>` : ""}<circle cx="${x}" cy="${y}" r="20" class="nbox ${err ? "nerr" : ""}"/><path d="${tri}" class="pt"/>
           ${txt(x, y + 36, nodeLabel(n), 'class="t-strong" text-anchor="middle"')}${c && c.Qd > 0 ? txt(x, y + 50, fmt(c.Qd, 2) + " m³/h", 'class="t-q" text-anchor="middle"') : ""}
           ${res.multi && c && c.H > 0 ? txt(x, y + 63, "H " + fmt(c.H, 2) + " mwc", 'class="t-ph" text-anchor="middle"') : ""}`;
         px = x + 24; py = y - 24; vx = x - 30; vy = y - 30;
@@ -1325,6 +1410,23 @@
     return list.map(c => `<h3 class="ptitle">${esc(nodeLabel(res.g.nById.get(c.pumpId)))} <span class="num">H ${c.H > 0 ? fmt(c.H, 2) + " mwc" : "—"} · Q ${fmt(c.Qd, 2)} m³/h</span>${c.provisional ? ` <em class="pbadge">προσωρινό</em>` : ""}</h3>${pathsTableOf(res, c)}`).join("");
   }
 
+  /* Στόμια διαχωριστή / buffer / δεξαμενής: πρωτεύον = η πλευρά με ψύκτη/λέβητα/ΑΘ/εναλλάκτη. */
+  function portsOf(res, n) {
+    const g = res.g, gen = zi => zi !== undefined && res.zones[zi] && res.zones[zi].sub.nodes.some(m => GEN_TYPES.includes(m.type));
+    const ins = g.inE.get(n.id).map(id => res.ecById.get(id)).filter(Boolean), outs = g.outE.get(n.id).map(id => res.ecById.get(id)).filter(Boolean);
+    const anyGen = [...ins, ...outs].some(x => gen(x.zone));
+    const prim = x => anyGen ? gen(x.zone) : false;
+    return { pIn: ins.filter(prim), pOut: outs.filter(prim), sIn: ins.filter(x => !prim(x)), sOut: outs.filter(x => !prim(x)) };
+  }
+  function portsHtml(res, n, buttons) {
+    const P = portsOf(res, n), g = res.g;
+    const cell = (list, label, dir, other) => `<div class="port ${list.length ? "ok" : "miss"}"><small>${label}</small>${list.length
+      ? list.map(x => `<b>${esc(edgeLabel(x.e))}</b> ${dir === "in" ? "από" : "προς"} ${esc(nodeLabel(g.nById.get(other(x.e))))}`).join("<br>")
+      : buttons ? `<button data-act="pop-dir" data-v="${dir}">+ Σύνδεση</button>` : `<button data-act="plus-node" data-id="${esc(n.id)}" data-dir="${dir}">+ Σύνδεση</button>`}</div>`;
+    return `<div class="ports"><div class="ports-h">Στόμια</div>
+      <div class="ports-g"><span class="pl">Πρωτεύον</span>${cell(P.pIn, "είσοδος από παραγωγή", "in", e => e.from)}${cell(P.pOut, "έξοδος προς παραγωγή", "out", e => e.to)}
+      <span class="pl">Δευτερεύον</span>${cell(P.sOut, "έξοδος προσαγωγής", "out", e => e.to)}${cell(P.sIn, "είσοδος επιστροφής", "in", e => e.from)}</div></div>`;
+  }
   function renderNetPop(res) {
     const el = $("#pop"); if (!el) return;
     const net = project.net;
@@ -1349,6 +1451,7 @@
       const tag = o => o.type === PUMP ? (into ? "έξοδος αντλίας" : project.openCircuit ? "αναρρόφηση αντλίας" : "κλείνει το κύκλωμα") : noIn(o) ? "χωρίς είσοδο — ενώνει κομμένο κομμάτι" : nodeType(o.type).short;
       const nm = esc(nodeLabel(n));
       el.innerHTML = `<div class="pop-h">${nm}</div>
+        ${nodeType(n.type).decoupler ? portsHtml(res, n, true) : ""}
         <div class="segctl sm pop-dir" role="group" aria-label="Φορά">
           <button class="${into ? "" : "on"}" data-act="pop-dir" data-v="out" aria-pressed="${!into}">Έξοδος (από εδώ →)</button>
           <button class="${into ? "on" : ""}" data-act="pop-dir" data-v="in" aria-pressed="${into}">Είσοδος (→ προς εδώ)</button>
@@ -1389,6 +1492,7 @@
         ${field("Q [m³/h]", `<input type="number" data-node="Q" value="${esc(num(n.loadKW) > 0 ? "" : n.Q)}" step="0.01" ${num(n.loadKW) > 0 ? "disabled placeholder='από φορτίο'" : ""}>`)}
         ${field("ή φορτίο [kW]", `<input type="number" data-node="loadKW" value="${esc(n.loadKW)}" step="0.1">`)}</div>
         <p class="desc">Αν τη δώσεις, οι σωλήνες πριν και μετά παίρνουν παροχή από το ισοζύγιο.</p>`) : ""}
+      ${t.decoupler ? `<div class="sub"><div class="sub-h"><span class="lt">4</span><span class="stt">Στόμια</span></div><div class="sub-b" id="ndPorts"></div></div>` : ""}
       <div class="sub"><div class="sub-h"><span class="lt">⇄</span><span class="stt">Συνδέσεις και ισοζύγιο</span></div><div class="sub-b" id="ndConn"></div></div>
       ${project.openCircuit ? "" : `<div class="sub"><div class="sub-h"><span class="lt">0</span><span class="stt">Σημείο μηδέν</span></div><div class="sub-b">
         <label class="check"><input type="checkbox" data-node="vessel" ${n.vessel ? "checked" : ""}> Εδώ συνδέεται το δοχείο διαστολής και η πλήρωση</label>
@@ -1416,6 +1520,7 @@
       ${nc.errs.length ? `<ul class="lst err">${nc.errs.map(e => `<li>${esc(e)}</li>`).join("")}</ul>` : balOk ? `<div class="good">Ό,τι μπαίνει βγαίνει.</div>` : ""}
       ${nc.warns.length ? `<ul class="lst warn">${nc.warns.map(e => `<li>${esc(e)}</li>`).join("")}</ul>` : ""}
       ${nc.byZone && nc.byZone.length > 1 ? `<p class="desc">Κοινό σημείο ${nc.byZone.length} ζωνών — ισοζύγιο χωριστά σε κάθε ζώνη: ${nc.byZone.map(b => `${esc(b.pumps.map(id => nodeLabel(g.nById.get(id))).join(", ") || "χωρίς αντλία")}: <b class="num">${fmt(isFinite(b.sIn) ? b.sIn : b.sOut, 2)} m³/h</b>`).join(" · ")}.</p>` : ""}`;
+    const npo = $("#ndPorts"); if (npo) npo.innerHTML = portsHtml(res, n, false) + `<p class="desc">Με 3 ή 4 συνδέσεις χωρίζει το δίκτυο σε πρωτεύον και δευτερεύον, το καθένα με δική του αντλία. Η επιστροφή του δευτερεύοντος μπαίνει από το «+ Σύνδεση» της είσοδου επιστροφής ή από το + του τελευταίου σημείου της επιστροφής → «υπάρχον σημείο».</p>`;
     const pp = $("#ndPump"), c = (res.circuits || []).find(k => k.pumpId === n.id);
     if (pp) pp.innerHTML = c ? `H <b class="num">${c.H > 0 ? fmt(c.H, 2) + " mwc" : "—"}</b> · Q <b class="num">${fmt(c.Qd, 2)} m³/h</b>${c.worstText ? " · δυσμενέστερη μέσω " + esc(c.worstText) : ""}${res.multi ? ` <button class="ghost small" data-act="view" data-id="${esc(n.id)}">Δες το κύκλωμά της</button>` : ""}` : "";
     const ps = $("#ndPress");
@@ -1529,6 +1634,10 @@
               <button class="ghost small zl" data-act="zoom" data-v="1" title="Πραγματικό μέγεθος"><span id="zoomLbl">${Math.round(netZoom * 100)} %</span></button>
               <button class="ghost small" data-act="zoom" data-v="in" title="Μεγέθυνση (Ctrl + ροδέλα)" aria-label="Μεγέθυνση">+</button>
               <button class="ghost small ${zoomFit ? "on" : ""}" data-act="zoom" data-v="fit" title="Να χωράει ολόκληρο">Χωράει</button>
+            </div>
+            <div class="segctl sm" role="group" aria-label="Διάταξη σχεδίου" title="Διάταξη σχεδίου">
+              <button class="${project.draw === "line" ? "" : "on"}" data-act="draw" data-v="u" aria-pressed="${project.draw !== "line"}" title="Προσαγωγή πάνω, επιστροφή κάτω (όπως στα P&ID)">⊐ Προσ./επιστρ.</button>
+              <button class="${project.draw === "line" ? "on" : ""}" data-act="draw" data-v="line" aria-pressed="${project.draw === "line"}" title="Όλα σε σειρά από αριστερά προς τα δεξιά">→ Γραμμή</button>
             </div>
             <button class="ghost small" data-act="net-expand" aria-pressed="${netFull}">${netFull ? "✕ Κλείσιμο μεγέθυνσης" : "⤢ Μεγέθυνση"}</button>
             <div class="segctl" role="group" aria-label="Τρόπος υπολογισμού">
@@ -2125,7 +2234,7 @@
     if (project.mode === "network") {
       if (a === "pick") { selId = id; selNode = null; pop = null; render(); return; }
       if (a === "pick-node") { selNode = id; selId = null; pop = null; render(); return; }
-      if (a === "plus" || a === "plus-node") { pop = pop && pop.id === id ? null : { id }; renderNetPop(calcProject()); return; }
+      if (a === "plus" || a === "plus-node") { pop = pop && pop.id === id && !t.dataset.dir ? null : { id, dir: t.dataset.dir || "out" }; renderNetPop(calcProject()); return; }
       if (a === "plus-edge") { pop = pop && pop.id === id ? null : { id, edge: true }; renderNetPop(calcProject()); return; }
       if (a === "insert-open") { const r = $("#schemWrap"); pop = { id, edge: true }; renderNetPop(calcProject()); if (r && r.scrollIntoView) r.scrollIntoView({ block: "nearest" }); return; }
       if (a === "add-to") { netAdd(t.dataset.from, t.dataset.type, null, t.dataset.dir === "in"); return; }
@@ -2137,6 +2246,7 @@
       if (a === "del") { delEdge(id); return; }
       if (a === "close-drawer") { selId = null; selNode = null; render(); return; }
       if (a === "net-expand") { netFull = !netFull; zoomFit = netFull; if (!netFull) netZoom = 1; render(); return; }
+      if (a === "draw") { project.draw = t.dataset.v === "line" ? "line" : "u"; lastPos.clear(); pop = null; render(); return; }
       if (a === "zoom") { const v = t.dataset.v; setZoom(v === "in" ? netZoom * 1.2 : v === "out" ? netZoom / 1.2 : 1, v === "fit"); const f = $('[data-act="zoom"][data-v="fit"]'); if (f) f.classList.toggle("on", zoomFit); return; }
     }
     if (a === "pick") { selId = id; pop = null; render(); scrollToEl("#sec-branch"); return; }
