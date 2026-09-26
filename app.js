@@ -26,7 +26,10 @@
   let selId = null;
   let pop = null;            // ανοιχτό μενού «+» στο σχηματικό: { id, x, y }
   let curveOpen = false;
-  const LS_KEY = "pumpcalc.project.v1";
+  // Αποθήκευση στον browser ανά ΕΚΔΟΣΗ: νέα έκδοση = καθαρό ξεκίνημα.
+  const APP_VERSION = (typeof window !== "undefined" && window.APP_VERSION) || DB.VERSION;
+  const LS_KEY = "pumpcalc.project." + APP_VERSION;
+  let restorable = null;     // έργο της προηγούμενης επίσκεψης (ίδια έκδοση), αν υπάρχει
 
   function blankProject() {
     return {
@@ -539,16 +542,19 @@
     const yStart = tree.roots.length ? yOf(pos.get(tree.roots[0]).row) : yOf(0);
     const out = [], pluses = [];
     const txt = (x, y, s, a = "") => `<text x="${x}" y="${y}" ${a}>${esc(s)}</text>`;
-    const st = project.start;
+    const st = project.start, isPump = st.type === "Αντλία";
     out.push(`<g class="startnode">
       <rect x="${boxX}" y="${yStart - 32}" width="${boxW}" height="64" rx="10" class="sbox"/>
-      ${txt(boxX + boxW / 2, yStart - 13, "ΑΡΧΗ ΒΡΟΧΟΥ", 'class="t-cap" text-anchor="middle"')}
+      ${txt(boxX + boxW / 2, yStart - 13, isPump ? "ΑΡΧΗ ΚΑΙ ΤΕΛΟΣ" : "ΑΡΧΗ ΒΡΟΧΟΥ", 'class="t-cap" text-anchor="middle"')}
       ${txt(boxX + boxW / 2, yStart + 5, trunc(st.type, 18), 'class="t-strong" text-anchor="middle"')}
       ${txt(boxX + boxW / 2, yStart + 21, trunc(st.label || (res.startM > 0 ? "ΔP " + fmt(res.startM) + " m" : ""), 20), 'class="t-small" text-anchor="middle"')}
     </g>`);
-    out.push(`<line x1="${boxX + boxW}" y1="${yStart}" x2="${pumpX - 13}" y2="${yStart}" class="ln-trunk"/>`);
-    out.push(`<g class="pump"><title>Αντλία — σε κλειστό βρόχο η θέση της δεν αλλάζει το H</title><circle cx="${pumpX}" cy="${yStart}" r="13" class="pc"/><path d="M${pumpX - 5} ${yStart - 7} L${pumpX + 8} ${yStart} L${pumpX - 5} ${yStart + 7} Z" class="pt"/></g>`);
-    out.push(`<line x1="${pumpX + 13}" y1="${yStart}" x2="${x0}" y2="${yStart}" class="ln-trunk"/>`);
+    if (isPump) out.push(`<line x1="${boxX + boxW}" y1="${yStart}" x2="${x0}" y2="${yStart}" class="ln-trunk"/>`);
+    else {
+      out.push(`<line x1="${boxX + boxW}" y1="${yStart}" x2="${pumpX - 13}" y2="${yStart}" class="ln-trunk"/>`);
+      out.push(`<g class="pump"><title>Αντλία — σε κλειστό βρόχο η θέση της δεν αλλάζει το H</title><circle cx="${pumpX}" cy="${yStart}" r="13" class="pc"/><path d="M${pumpX - 5} ${yStart - 7} L${pumpX + 8} ${yStart} L${pumpX - 5} ${yStart + 7} Z" class="pt"/></g>`);
+      out.push(`<line x1="${pumpX + 13}" y1="${yStart}" x2="${x0}" y2="${yStart}" class="ln-trunk"/>`);
+    }
     out.push(`<circle cx="${x0}" cy="${yStart}" r="5" class="junc"/>`);
 
     tree.order.forEach(id => {
@@ -665,7 +671,10 @@
           ${field("ΔP αρχής", `<input type="number" id="startDP" data-start="dP" value="${esc(st.dP)}" step="0.1" placeholder="0">`)}
           ${field("Μονάδα", `<select data-start="unit">${["kPa", "m"].map(u => `<option ${u === st.unit ? "selected" : ""}>${u}</option>`).join("")}</select>`)}
         </div>
-        <p class="desc">ΔP της αρχής όταν ο βρόχος περνά μέσα από αυτήν (π.χ. εξατμιστής ψύκτη, εναλλάκτης). Buffer, διαχωριστής, συλλέκτης: άφησέ το κενό. Buffer ή διαχωριστής στη μέση του δικτύου σημαίνει τέλος του βρόχου αυτής της αντλίας — ό,τι ακολουθεί είναι άλλος υπολογισμός.</p>
+        <p class="desc">${st.type === "Αντλία"
+          ? "Ο βρόχος ξεκινά και τελειώνει στην αντλία. Σωλήνες πριν και μετά την αντλία είναι απλώς κλάδοι σε σειρά — η σειρά τους δεν αλλάζει το άθροισμα. ΔP αρχής: κενό."
+          : "ΔP της αρχής όταν ο βρόχος περνά μέσα από αυτήν (π.χ. εξατμιστής ψύκτη, εναλλάκτης). Buffer, διαχωριστής, συλλέκτης: άφησέ το κενό. Buffer ή διαχωριστής στη μέση του δικτύου σημαίνει τέλος του βρόχου αυτής της αντλίας — ό,τι ακολουθεί είναι άλλος υπολογισμός."}</p>
+        <p class="desc"><b>Επιστροφή:</b> ο βρόχος κλείνει μόνος του. Κλάδος με «×2» μετράει προσαγωγή και επιστροφή ως την αρχή. Αν η επιστροφή ακολουθεί άλλη διαδρομή (π.χ. κοινός συλλέκτης επιστροφής), βάλ' τη ως δικό της κλάδο με «συνολικό» μήκος στην ίδια διαδρομή — αν είναι κοινή για όλους, πριν από τις διακλαδώσεις.</p>
         ${net
           ? `<div class="schem-outer" id="schemOuter"><div class="schem-wrap" id="schemWrap"><div id="schem"></div></div><div id="pop" class="pop" hidden></div></div>
              <div class="legend">
@@ -719,7 +728,9 @@
         </div>
       </details>`;
 
-    $("#flowMain").innerHTML = cProj + cNet + cPaths + cBranch + cExtras + cCurve;
+    const banner = restorable ? `<div class="restore"><span>Υπάρχει έργο από την προηγούμενη επίσκεψη σε αυτόν τον browser: <b>«${esc(restorable.meta.name || "χωρίς όνομα")}»</b> (${restorable.branches.length} κλάδοι).</span>
+      <button class="primary small" data-act="restore">Άνοιγμα</button><button class="ghost small" data-act="restore-no">Όχι, νέο έργο</button></div>` : "";
+    $("#flowMain").innerHTML = banner + cProj + cNet + cPaths + cBranch + cExtras + cCurve;
     const cc = $("#c-curve");
     if (cc) cc.addEventListener("toggle", () => { curveOpen = cc.open; if (curveOpen) liveRecalc(); });
   }
@@ -993,7 +1004,7 @@
         <div class="kpi-main ${res.provisional ? "prov" : ""}">
           <span>Μανομετρικό κυκλοφορητή ${res.provisional ? `<em class="pbadge">προσωρινό</em>` : ""}</span>
           <b>${res.H > 0 ? fmt(res.H, 2) + " m" : "—"}</b>
-          <span class="kpi-sub">${fmt(toKPa(res.H, fp), 1)} kPa · Q = ${fmt(res.Qd, 2)} m³/h</span>
+          <span class="kpi-sub">${res.H > 0 ? fmt(toKPa(res.H, fp), 1) + " kPa · " : ""}Q = ${fmt(res.Qd, 2)} m³/h</span>
         </div>
         ${res.provisional ? `<p class="provnote">Λείπουν στοιχεία (δες «Τι λείπει»). Ελλιπείς κλάδοι δεν μετράνε ακόμα — το H μπορεί να αυξηθεί.</p>` : ""}
         ${rows.map(([a, b]) => `<div class="rowline"><span>${a}</span><span>${b}</span></div>`).join("")}
@@ -1001,8 +1012,9 @@
       ${miss}${obs}${good}
       <div class="mini actions">
         <button class="primary" data-act="report">Αναφορά PDF</button>
+        <button class="primary alt" data-act="save-html" title="Αρχείο .html που ανοίγει το εργαλείο συμπληρωμένο">Αποθήκευση έργου</button>
         <button data-act="save">Αποθήκευση .json</button>
-        <button data-act="load">Φόρτωση .json</button>
+        <button data-act="load">Άνοιγμα αρχείου</button>
         <button class="danger" data-act="new">Νέο έργο</button>
       </div>
       <details class="mini"><summary>Τύποι υπολογισμού</summary><div class="formulas">${DB.THEORY.map(t => `<div><b>${esc(t[0])}</b><br><code>${esc(t[1])}</code>${t[3] ? `<br><span class="muted">${esc(t[3])}</span>` : ""}</div>`).join("")}</div></details>`;
@@ -1171,9 +1183,12 @@
     if (a === "pp-del") { project.pump.points.splice(+t.dataset.i, 1); render(); return; }
     if (a === "report") { openReport(); return; }
     if (a === "save") { saveFile(); return; }
+    if (a === "save-html") { saveHtmlFile(); return; }
+    if (a === "restore") { if (restorable) { project = normalize(restorable); restorable = null; selId = null; pop = null; render(); } return; }
+    if (a === "restore-no") { restorable = null; render(); return; }
     if (a === "load") { $("#fileInput").click(); return; }
     if (a === "to-side") { const s = $("#side"); if (s) s.scrollIntoView({ behavior: "smooth" }); return; }
-    if (a === "new") { if (confirm("Νέο έργο; Τα μη αποθηκευμένα δεδομένα θα χαθούν.")) { project = blankProject(); project.branches.push(blankBranch(null)); selId = null; pop = null; render(); } return; }
+    if (a === "new") { if (confirm("Νέο έργο; Ό,τι δεν έχει αποθηκευτεί σε αρχείο θα χαθεί.")) { project = blankProject(); selId = null; pop = null; render(); } return; }
   }
   function onKey(e) {
     if (e.key === "Escape" && pop) { pop = null; renderPop(calcProject()); return; }
@@ -1205,20 +1220,73 @@
   }
 
   /* ---------------- PERSISTENCE ---------------- */
-  function save() { try { localStorage.setItem(LS_KEY, JSON.stringify(project)); } catch (e) { } }
-  function load() { try { const s = localStorage.getItem(LS_KEY); if (s) { project = normalize(JSON.parse(s)); } } catch (e) { } }
-  function saveFile() {
-    const blob = new Blob([JSON.stringify(project, null, 2)], { type: "application/json" });
+  function isEmpty(p) { return !p.branches.length && !p.extras.length; }
+  function save() { try { if (isEmpty(project)) localStorage.removeItem(LS_KEY); else localStorage.setItem(LS_KEY, JSON.stringify(project)); } catch (e) { } }
+  /* Δεν ανοίγει μόνο του ό,τι έμεινε στον browser· προτείνεται με κουμπί.
+     Κλειδιά άλλων εκδόσεων σβήνονται. */
+  function load() {
+    try {
+      for (let i = localStorage.length - 1; i >= 0; i--) { const k = localStorage.key(i); if (k && k.startsWith("pumpcalc.project.") && k !== LS_KEY) localStorage.removeItem(k); }
+      const s = localStorage.getItem(LS_KEY);
+      if (s) { const p = normalize(JSON.parse(s)); if (!isEmpty(p)) restorable = p; }
+    } catch (e) { }
+  }
+  const fileSafe = (x) => (String(x || "").trim().replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").slice(0, 80) || "kykloforitis");
+  function dateStamp() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+  function download(content, type, name) {
+    const blob = new Blob([content], { type });
     const a = document.createElement("a");
-    const safe = (project.meta.code || project.meta.name || "project").replace(/[^\p{L}\p{N}\-]+/gu, "_");
-    a.href = URL.createObjectURL(blob); a.download = "kykloforitis_" + safe + ".json"; a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+  /* Αρχείο έργου .html (όπως στο LoadCalculator): κρατά τα δεδομένα και με διπλό
+     κλικ ανοίγει το εργαλείο συμπληρωμένο. Τα δεδομένα είναι και JSON μέσα στο
+     <script id="pcproj"> — διαβάζονται και από το «Άνοιγμα αρχείου». */
+  function saveHtmlFile() {
+    const json = JSON.stringify(project).replace(/</g, "\\u003c");
+    const app = location.href.split("#")[0];
+    const name = esc(project.meta.name || "Έργο");
+    const html = `<!doctype html><html lang="el"><head><meta charset="utf-8"><title>${name} — Υπολογισμός κυκλοφορητή</title></head>`
+      + `<body style="font-family:system-ui,sans-serif;padding:40px;color:#132033">`
+      + `<p>Άνοιγμα του έργου «${name}» στον Υπολογισμό κυκλοφορητή…</p>`
+      + `<p><a id="go" href="${esc(app)}">Αν δεν ανοίξει αυτόματα, πάτα εδώ.</a></p>`
+      + `<p style="color:#4A5A6C;font-size:14px">Αρχείο έργου PumpCalculator v${esc(APP_VERSION)}. Ανοίγει και με το «Άνοιγμα αρχείου» μέσα στο εργαλείο.</p>`
+      + `<script id="pcproj" type="application/json">${json}<\/script>`
+      + `<script>(function(){var A=${JSON.stringify(app)};var j=document.getElementById("pcproj").textContent;var b=btoa(unescape(encodeURIComponent(j)));var u=A+"#pcproj="+encodeURIComponent(b);document.getElementById("go").href=u;location.replace(u);})();<\/script>`
+      + `</body></html>`;
+    download(html, "text/html;charset=utf-8", `${fileSafe(project.meta.name)} ${dateStamp()}.pump.html`);
+  }
+  function parseProjectText(text) {
+    const t = String(text || "").trim();
+    if (t.startsWith("{")) return JSON.parse(t);
+    const doc = new DOMParser().parseFromString(t, "text/html");
+    const node = doc.getElementById("pcproj");
+    if (!node) throw new Error("no project data");
+    return JSON.parse(node.textContent);
+  }
+  function loadFromHash() {
+    const m = /[#&]pcproj=([^&]+)/.exec(location.hash || "");
+    if (!m) return false;
+    try {
+      const j = decodeURIComponent(escape(atob(decodeURIComponent(m[1]))));
+      project = normalize(JSON.parse(j)); restorable = null;
+      history.replaceState(null, "", location.href.split("#")[0]);
+      return true;
+    } catch (e) { alert("Το αρχείο έργου δεν διαβάστηκε."); return false; }
+  }
+  function saveFile() {
+    download(JSON.stringify(project, null, 2), "application/json", `${fileSafe(project.meta.name)} ${dateStamp()}.pump.json`);
   }
   function loadFile(file) {
     const r = new FileReader();
     r.onload = () => {
-      try { project = normalize(JSON.parse(r.result)); selId = null; pop = null; render(); }
-      catch (e) { alert("Μη έγκυρο αρχείο .json"); }
+      try {
+        const p = parseProjectText(r.result);
+        if (!isEmpty(project) && !confirm("Να αντικατασταθεί το τρέχον έργο από το αρχείο;")) return;
+        project = normalize(p); restorable = null; selId = null; pop = null; render();
+      }
+      catch (e) { alert("Το αρχείο δεν είναι έργο του Υπολογισμού κυκλοφορητή (.html ή .json)."); }
     };
     r.readAsText(file);
   }
@@ -1403,7 +1471,7 @@
   window.PumpEngine = {
     nuWater, interp, fluidProps, lookupPipe, calcPipe, calcFitting, calcBranch,
     calcProject, validate, friction, qOf, fitPump, opPoint, normalize, vMaxFor, toKPa, toM, nextCode,
-    setMode, treeOf, schematic,
+    setMode, treeOf, schematic, parseProjectText,
     setProject(p) { project = p; },
     getProject() { return project; }
   };
@@ -1411,8 +1479,8 @@
   /* ---------------- INIT ---------------- */
   function init() {
     load();
+    loadFromHash();
     normalize(project);
-    if (!project.branches.length) project.branches.push(blankBranch(null));
     $("#fileInput").addEventListener("change", e => { if (e.target.files[0]) loadFile(e.target.files[0]); e.target.value = ""; });
     render();
     initStickySide();

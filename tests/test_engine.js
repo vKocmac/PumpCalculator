@@ -308,6 +308,17 @@ E.setProject(E.normalize({ mode: "network", meta: {}, fluid: "water", waterTemp:
 truthy("Κλάδοι μετά ξεπερνούν ήδη το Q (70 > 60) → προειδοποίηση πριν συμπληρωθούν όλοι",
   E.validate(E.calcProject()).warns.some(w => w.includes("αθροίζουν ήδη")));
 
+/* =========================== 14. Έκδοση =========================== */
+console.log("\n[14] Ίδια έκδοση παντού (αλλιώς ο browser κρατά παλιά αρχεία)");
+const ver = fs.readFileSync(path.join(dir, "version.txt"), "utf8").trim();
+const idx = fs.readFileSync(path.join(dir, "index.html"), "utf8");
+const appV = (/APP_VERSION = "([^"]+)"/.exec(idx) || [])[1];
+const qs = [...idx.matchAll(/(styles\.css|data\.js|app\.js)\?v=([^"]+)"/g)].map(m => m[2]);
+truthy(`version.txt ${ver} = APP_VERSION ${appV} = data.js ${window.DB.VERSION}`, ver === appV && ver === window.DB.VERSION);
+truthy(`?v= στα 3 αρχεία = ${ver}`, qs.length === 3 && qs.every(v => v === ver), qs.join(","));
+const pj = E.parseProjectText(JSON.stringify({ meta: { name: "x" }, branches: [] }));
+truthy("Άνοιγμα αρχείου: δέχεται JSON", pj.meta.name === "x");
+
 /* =========================== Σύνοψη =========================== */
 console.log(`\n========== ${pass} passed, ${fail} failed ==========`);
 process.exit(fail ? 1 : 0);
