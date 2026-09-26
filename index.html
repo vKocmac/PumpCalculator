@@ -3,39 +3,43 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Υπολογισμός Κυκλοφορητών</title>
+  <title>Υπολογισμός Κυκλοφορητή</title>
   <!-- Κάρτα προεπισκόπησης (LinkedIn, μηνύματα) — η εικόνα είναι το og.png -->
-  <meta name="description" content="Required pump head for hydronic circuits — Darcy-Weisbach for pipework, loss coefficients for fittings, water or glycol, velocity checks.">
+  <meta name="description" content="Required pump head and flow for closed or open hydronic circuits — water or glycol, parallel branches with index circuit, velocity and pressure-drop checks, pump operating point.">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Pump Head Calculator">
-  <meta property="og:description" content="Required pump head for hydronic circuits — Darcy-Weisbach for pipework, loss coefficients for fittings, water or glycol, velocity checks.">
+  <meta property="og:description" content="Required pump head and flow for closed or open hydronic circuits — water or glycol, parallel branches with index circuit, velocity and pressure-drop checks, pump operating point.">
   <meta property="og:url" content="https://vkocmac.github.io/PumpCalculator/">
   <meta property="og:image" content="https://vkocmac.github.io/PumpCalculator/og.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="627">
   <meta name="twitter:card" content="summary_large_image">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header class="top">
-    <h1>💧 Υπολογισμός Κυκλοφορητών</h1>
-    <span class="sub">Μανομετρικό δικτύου — Darcy-Weisbach + ζ/Kv</span>
+<div class="app">
+  <header class="hero">
+    <h1>Υπολογισμός κυκλοφορητή</h1>
+    <p>Απαιτούμενο μανομετρικό και παροχή για κύκλωμα νερού ή γλυκόλης.</p>
   </header>
 
-  <div class="layout">
-    <aside id="sidebar"></aside>
-    <main id="main"></main>
+  <div class="workspace">
+    <main class="main" id="flowMain"></main>
+    <aside class="side" id="side"></aside>
   </div>
 
-  <div id="warnings"></div>
-
-  <footer>
-    Δεδομένα (σωλήνες/εξαρτήματα/ρευστά) στο <code>data.js</code> — τα πειράζεις χωρίς να αγγίξεις τον κώδικα.
+  <footer class="site-footer">
+    Δεδομένα (σωλήνες, εξαρτήματα, ρευστά, όρια) στο <code>data.js</code> — αλλάζουν χωρίς να αγγίξεις τον κώδικα.
   </footer>
+</div>
+<div class="lc-mbar" id="mbar"></div>
 
-  <input type="file" id="fileInput" accept=".json" hidden>
+<input type="file" id="fileInput" accept=".json" hidden>
 
-  <script src="data.js"></script>
-  <script src="app.js"></script>
+<script src="data.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

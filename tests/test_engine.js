@@ -35,16 +35,34 @@ console.log("\n[1] Ιξώδες / ρευστά");
 close("ν νερού 45°C", E.nuWater(45), 5.972631353300369e-7, 1e-12);
 close("ν νερού 80°C", E.nuWater(80), 1e-6 * Math.exp(0.5842 - 0.030263 * 80 + 0.0001295 * 6400), 1e-12);
 
-E.setProject({ meta: {}, fluid: "pg", concPct: 35, waterTemp: 45, marginPct: 0, extras: [], branches: [] });
-close("ν PG 35% (interp 2.4→3.3 ⇒ ×2.85)", E.fluidProps().nu, 1.7021999356906053e-6, 1e-9);
-close("SG PG 35% (interp 1.025→1.035)", E.fluidProps().sg, 1.03, 1e-9);
-
-E.setProject({ meta: {}, fluid: "pg", concPct: 0, waterTemp: 45, marginPct: 0, extras: [], branches: [] });
+const setF = (fluid, concPct, waterTemp) => E.setProject(E.normalize({ meta: {}, fluid, concPct, waterTemp, marginPct: 0, extras: [], branches: [] }));
+// Γλυκόλη: πίνακες ανά θερμοκρασία (Melinder/IIR μέσω CoolProp). Τιμές αναφοράς CoolProp 8.0 εκτός κόμβων:
+const ref = [
+  ["pg", 35, 7, 6.198885e-6, 1034.302, 3.746948],
+  ["pg", 35, 45, 1.578813e-6, 1013.729, 3.858703],
+  ["eg", 25, 15, 2.137374e-6, 1032.786, 3.798815],
+  ["pg", 30, -5, 8.975519e-6, 1033.024, 3.788966]
+];
+ref.forEach(([f, c, T, nu, rho, cp]) => {
+  setF(f, c, T); const p = E.fluidProps();
+  truthy(`${f.toUpperCase()} ${c}% ${T}°C: ν εντός +0…+5% του CoolProp (${(100 * (p.nu / nu - 1)).toFixed(1)}%)`, p.nu >= nu * 0.995 && p.nu <= nu * 1.05);
+  close(`${f.toUpperCase()} ${c}% ${T}°C: ρ`, p.rho, rho, 5e-3);
+  close(`${f.toUpperCase()} ${c}% ${T}°C: cp`, p.cp, cp, 5e-3);
+});
+setF("pg", 30, 10);
+close("PG 30% 10°C κόμβος πίνακα: ν = ν_νερού·3.216", E.fluidProps().nu, E.nuWater(10) * 3.216, 1e-9);
+setF("pg", 0, 45);
 close("PG 0% = νερό", E.fluidProps().nu, E.nuWater(45), 1e-12);
-E.setProject({ meta: {}, fluid: "pg", concPct: 99, waterTemp: 45, marginPct: 0, extras: [], branches: [] });
-close("PG >50% clamp στο 4.8×", E.fluidProps().nu, E.nuWater(45) * 4.8, 1e-12);
-E.setProject({ meta: {}, fluid: "eg", concPct: 40, waterTemp: 45, marginPct: 0, extras: [], branches: [] });
-close("EG 40% = ×2.3", E.fluidProps().nu, E.nuWater(45) * 2.3, 1e-12);
+setF("pg", 99, 45);
+close("PG >60% → όριο 60%", E.fluidProps().nu, E.nuWater(45) * (6.016 + 5.293) / 2, 1e-9);
+truthy("PG >60% → προειδοποίηση εκτός πίνακα", E.fluidProps().clamped);
+setF("pg", 30, -15);
+truthy("PG 30% −15°C (πήξη −12.8) → frozen", E.fluidProps().frozen);
+truthy("… και σφάλμα validation", E.validate(E.calcProject()).errors.some(e => e.includes("σημείο πήξης")));
+setF("water", 0, -2);
+truthy("Νερό −2°C → frozen", E.fluidProps().frozen);
+setF("water", 0, 45);
+close("Νερό 45°C ρ (πίνακας 40…50)", E.fluidProps().rho, (992.3 + 988.1) / 2, 1e-9);
 
 /* =========================== 2. Lookup σωλήνων =========================== */
 console.log("\n[2] Πίνακας σωλήνων");
@@ -91,7 +109,9 @@ r.branches.forEach((b, i) => {
   close(`v ${b.br.name}`, b.c.pipe.v, wantV[i], 1e-5);
   close(`ΔP_${b.br.name}`, b.c.dP, wantL[i], 1e-5);
 });
-close("Σ καρφωτά", r.sumExtras, 2.09, 1e-12);
+close("Σ σταθερών απωλειών", r.sumExtras, 2.09, 1e-12);
+truthy("Παλιό αρχείο → ένα κύκλωμα L1…L5 σε σειρά", r.circuits.length === 1 && r.circuits[0].ids.length === 5);
+close("Παροχή αντλίας = Q του L1", r.Qd, 4.2, 1e-12);
 close("H (margin 0%)", r.H, 9.356249, 1e-5);
 E.getProject().marginPct = 10;
 close("H (margin 10%)", E.calcProject().H, 10.291874, 1e-5);
@@ -125,6 +145,87 @@ E.setProject({
   branches: [{ id: "y", name: "Ly", Q: 20, pipeFamily: fam, pipeSize: "Φ25", length: 5, fittings: [] }]
 });
 truthy("v>2 m/s → warning", E.validate(E.calcProject()).warns.some(w => w.includes("υψηλή ταχύτητα")));
+
+/* =========================== 6. Τριβή: στρωτή / μεταβατική =========================== */
+console.log("\n[6] Στρωτή και μεταβατική ροή");
+close("Re=1000 → λ=64/Re", E.friction(1000, 0, 32.72), 0.064, 1e-12);
+close("Re=2300 συνέχεια με 64/Re", E.friction(2300, 0, 32.72), 64 / 2300, 1e-9);
+const sj4000 = 0.25 / Math.pow(Math.log10(0 + 5.74 / Math.pow(4000, 0.9)), 2);
+close("Re=4000 = Swamee-Jain", E.friction(4000, 0, 32.72), sj4000, 1e-9);
+close("Re=3150 στη μέση της μετάβασης", E.friction(3150, 0, 32.72), (64 / 2300 + sj4000) / 2, 1e-9);
+
+/* =========================== 7. Δίκτυο με παράλληλους κλάδους =========================== */
+console.log("\n[7] Δίκτυο: δυσμενέστερο κύκλωμα, Π+Ε, εξισορρόπηση");
+const B = (id, parent, kind, Q, size, L, extra = {}) => ({ id, code: id, desc: "", kind, parent, Q, loadKW: "", pipeFamily: fam, pipeSize: size, length: L, fittings: [], equip: [], ...extra });
+E.setProject(E.normalize({
+  meta: {}, fluid: "water", concPct: 0, waterTemp: 45, marginPct: 10, dT: 5, extras: [{ label: "Εναλλάκτης", dP: 20, unit: "kPa" }],
+  branches: [B("A", null, "t", 4, "Φ50", 10), B("B", "A", "pe", 2.5, "Φ40", 20), B("C", "A", "pe", 1.5, "Φ32", 30, { equip: [{ label: "FCU", dP: 15, unit: "kPa" }] })]
+}));
+const rn = E.calcProject();
+const dA = rn.cById.get("A").c.dP, dB = rn.cById.get("B").c.dP, dC = rn.cById.get("C").c.dP;
+truthy("2 κυκλώματα (A›B, A›C)", rn.circuits.length === 2);
+const worstDP = Math.max(dA + dB, dA + dC);
+close("Δυσμενέστερο = max διαδρομής", rn.sumBranches, worstDP, 1e-12);
+truthy("Δυσμενέστερο = A›C (μακρύτερο, μικρότερη διατομή, FCU)", rn.worst.leaf === "C");
+const fpw = rn.fp, extraM = 20 * 1000 / (fpw.rho * 9.81);
+close("kPa → m με ρ του ρευστού", rn.sumExtras, extraM, 1e-12);
+close("H = (δυσμ. + εξοπλ.)·1.10", rn.H, (worstDP + extraM) * 1.1, 1e-12);
+close("Παροχή αντλίας = Q ρίζας", rn.Qd, 4, 1e-12);
+const cB = rn.circuits.find(c => c.leaf === "B");
+close("Περίσσεια A›B για εξισορρόπηση", cB.excess, (dA + dC) - (dA + dB), 1e-12);
+close("Kv εξισορρόπησης = Q/√ΔP[bar]", cB.kvReq, 2.5 / Math.sqrt(cB.excessKPa / 100), 1e-12);
+close("Π+Ε: L διπλάσιο (B 2×20 m)", rn.cById.get("B").c.pipe.Leff, 40, 1e-12);
+close("Εξοπλισμός κλάδου σε m", rn.cById.get("C").c.sumEquip, 15 * 1000 / (fpw.rho * 9.81), 1e-12);
+truthy("Ισοζύγιο: 2.5+1.5 = Q του A → χωρίς προειδοποίηση", !E.validate(rn).warns.some(w => w.includes("αθροίζουν")));
+E.getProject().branches[1].Q = 3;
+truthy("Ισοζύγιο: 3+1.5 ≠ 4 → προειδοποίηση", E.validate(E.calcProject()).warns.some(w => w.includes("αθροίζουν")));
+E.getProject().openCircuit = true; E.getProject().staticHead = 5; E.getProject().branches[1].Q = 2.5;
+close("Ανοιχτό κύκλωμα: + στατικό μετά την προσαύξηση", E.calcProject().H, (worstDP + extraM) * 1.1 + 5, 1e-12);
+
+/* =========================== 8. Παροχή από φορτίο, διατομή εξαρτήματος, παλαιό δίκτυο ====== */
+console.log("\n[8] Q από φορτίο, διατομή εξαρτήματος, παλαιό δίκτυο");
+E.setProject(E.normalize({ meta: {}, fluid: "water", waterTemp: 45, marginPct: 0, dT: 5, extras: [],
+  branches: [B("X", null, "t", "", "Φ40", 10, { loadKW: 20, fittings: [{ type: "Συστολή", size: "Φ25", qty: 1, zeta: 0.5, kv: "" }] })] }));
+const rx = E.calcProject(), fx = rx.fp, cx = rx.cById.get("X").c;
+close("Q = 3600·P/(ρ·cp·ΔT)", cx.Q, 3600 * 20 / (fx.rho * fx.cp * 5), 1e-12);
+const vF = (cx.Q / 3600) / (Math.PI * 0.02046 * 0.02046 / 4);
+close("Εξάρτημα σε Φ25: ζ με την ταχύτητα της Φ25", cx.fittings[0].total, 0.5 * vF * vF / (2 * 9.81), 1e-9);
+truthy("… και όχι με του σωλήνα Φ40", cx.fittings[0].v > cx.pipe.v * 2);
+const newDP = cx.pipe.dP;
+E.setProject(E.normalize({ meta: {}, fluid: "water", waterTemp: 45, marginPct: 0, aged: true, extras: [],
+  branches: [B("S", null, "t", 3, "DN32", 20, { pipeFamily: "Σιδηροσωλήνας (μαύρος)" })] }));
+const agedC = E.calcProject().cById.get("S").c.pipe;
+truthy("Παλαιό δίκτυο: k σιδηροσωλήνα 0.2 mm", agedC.k === 0.2);
+E.getProject().aged = false;
+const newC = E.calcProject().cById.get("S").c.pipe;
+truthy("Παλαιό δίκτυο → μεγαλύτερη ΔP (" + (100 * (agedC.dP / newC.dP - 1)).toFixed(0) + "%)", agedC.dP > newC.dP * 1.05);
+
+/* =========================== 9. Μετάβαση παλιού ονόματος & κωδικοί =========================== */
+console.log("\n[9] Παλιά αρχεία");
+const old = E.normalize({ branches: [{ name: "L1 — Σιδηροσωλήνας λεβητοστασίου", Q: 1, pipeFamily: fam, pipeSize: "Φ40", length: 1 }, { name: "L2", Q: 1, pipeFamily: fam, pipeSize: "Φ40", length: 1 }] });
+truthy("«L1 — Σιδηροσωλήνας…» → κωδικός L1", old.branches[0].code === "L1");
+truthy("… περιγραφή «Σιδηροσωλήνας λεβητοστασίου»", old.branches[0].desc === "Σιδηροσωλήνας λεβητοστασίου");
+truthy("Παλιό αρχείο → αλυσίδα, συνολικό μήκος", old.branches[1].parent === old.branches[0].id && old.branches[1].kind === "t");
+E.setProject(E.normalize({ branches: [{ code: "L1", parent: null }, { code: "L3", parent: null }] }));
+truthy("Νέος κωδικός μετά από L1, L3 = L4 (όχι διπλός)", E.nextCode() === "L4");
+
+/* =========================== 10. Αντλία, βάνες =========================== */
+console.log("\n[10] Αντλία και βάνες");
+const pf = E.fitPump([{ Q: 0, H: 16 }, { Q: 4, H: 14 }, { Q: 7, H: 9 }]);
+close("Καμπύλη αντλίας περνά από τα σημεία (Q=4)", pf.H(4), 14, 1e-9);
+close("Καμπύλη αντλίας περνά από τα σημεία (Q=7)", pf.H(7), 9, 1e-9);
+const op = E.opPoint(pf, 0, 12 / 16);   // δίκτυο 12 m στα 4 m³/h
+close("Σημείο λειτουργίας: H_αντλίας = H_δικτύου", op.H, 0.75 * op.Q * op.Q, 1e-9);
+E.setProject(E.normalize({ meta: {}, fluid: "water", waterTemp: 45, marginPct: 0, extras: [],
+  branches: [B("V", null, "t", 1.5, "Φ32", 10, { fittings: [
+    { type: "Βάνα ελέγχου 2οδη (Kv από φύλλο)", size: "", qty: 1, zeta: "", kv: 10 },
+    { type: "Ρυθμιστική / εξισορρόπησης", size: "", qty: 1, zeta: "", kv: 25 }] })] }));
+const rv = E.calcProject(), cv = rv.cById.get("V").c, vv = E.validate(rv);
+close("Authority = ΔP_βάνας / ΔP_κλάδου", cv.ctrl.auth, cv.fittings[0].total / cv.dP, 1e-12);
+truthy("Authority < 0.5 → προειδοποίηση", cv.ctrl.auth < 0.5 && vv.warns.some(w => w.includes("authority")));
+truthy("Βάνα εξισορρόπησης < 3 kPa → προειδοποίηση", vv.warns.some(w => w.includes("εξισορρόπησης")));
+truthy("v_max ανά διάμετρο: D 26 mm → 1.1 m/s", E.vMaxFor(26.18) === 1.1);
+truthy("R > 300 Pa/m → προειδοποίηση", (() => { E.setProject(E.normalize({ meta: {}, fluid: "water", waterTemp: 45, extras: [], branches: [B("R", null, "t", 2.2, "Φ32", 10)] })); return E.validate(E.calcProject()).warns.some(w => w.includes("Pa/m")); })());
 
 /* =========================== Σύνοψη =========================== */
 console.log(`\n========== ${pass} passed, ${fail} failed ==========`);
