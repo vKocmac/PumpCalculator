@@ -657,7 +657,7 @@
           </div>
         </div>
         <p class="lead">${net
-          ? "Ο βρόχος της αντλίας που υπολογίζεις. Πάτα έναν κλάδο για να τον συμπληρώσεις. Το <b>+</b> είναι σημείο του δικτύου: νέος κλάδος ξεκινά από εκεί — αν από το ίδιο σημείο ξεκινά ήδη κλάδος, ο νέος είναι παράλληλος. Ο επιλεγμένος κλάδος σβήνεται με το <b class='x'>✕</b>. Σε κλειστό βρόχο η θέση της αντλίας δεν αλλάζει το H."
+          ? "Ο βρόχος της αντλίας που υπολογίζεις. Πάτα έναν κλάδο για να τον συμπληρώσεις. Το <b>+</b> στο τέλος ενός κλάδου δίνει συνέχεια μετά από αυτόν ή παράλληλο κλάδο δίπλα του. Ο επιλεγμένος κλάδος σβήνεται με το <b class='x'>✕</b>. Σε κλειστό βρόχο η θέση της αντλίας δεν αλλάζει το H."
           : "Κλάδοι σε σειρά, από την αρχή του βρόχου ως το δυσμενέστερο τερματικό. Όλοι αθροίζονται. Για παράλληλους κλάδους διάλεξε «Δίκτυο με διακλαδώσεις»."}</p>
         <div class="startrow">
           ${field("Αρχή βρόχου", `<select data-start="type">${startOpts}</select>`)}
@@ -883,8 +883,12 @@
         <button data-act="start-eq"><b>ΔP της αρχής</b><small>${esc(project.start.type)} — αν ο βρόχος περνά από μέσα</small></button>`;
     } else {
       const b = res.cById.get(pop.id).br, c = esc(branchLabel(b)), ks = res.tree.kids.get(b.id) || [];
-      html = `<div class="pop-h">Τέλος του ${c}</div>
-        <button data-act="add-after" data-id="${esc(b.id)}"><b>Νέος κλάδος από εδώ</b><small>${ks.length ? `παράλληλος με ${lbls(ks)} (ξεκινούν από το ίδιο σημείο)` : `συνέχεια του ${c}`}</small></button>
+      const from = b.parent ? `το τέλος του ${esc(branchLabel(res.tree.byId.get(b.parent)))}` : "την αρχή του βρόχου";
+      const sibs = (b.parent ? res.tree.kids.get(b.parent) : res.tree.roots).filter(id => id !== b.id);
+      html = `<div class="pop-h">Νέος κλάδος</div>
+        <button data-act="add-after" data-id="${esc(b.id)}"><b>Συνέχεια μετά τον ${c}</b><small>ξεκινά εκεί που τελειώνει ο ${c}${ks.length ? ` — παράλληλα με ${lbls(ks)} που ξεκινούν ήδη εκεί` : ""}</small></button>
+        <button data-act="add-par" data-id="${esc(b.id)}"><b>Παράλληλος με τον ${c}</b><small>ξεκινά από ${from}, όπως ο ${c}${sibs.length ? ` (και οι ${lbls(sibs)})` : ""}</small></button>
+        <div class="pop-h">Στο τέλος του ${c}</div>
         <button data-act="add-eq" data-id="${esc(b.id)}"><b>Εξοπλισμός στο τέλος του ${c}</b><small>FCU, στοιχείο, εναλλάκτης — σε σειρά με τον ${c}</small></button>`;
     }
     el.innerHTML = html;
@@ -1144,6 +1148,7 @@
       renderPop(calcProject()); return;
     }
     if (a === "add-after") { addBranch(id, project.branches.find(b => b.id === id)); return; }
+    if (a === "add-par") { const b = project.branches.find(x => x.id === id); if (b) addBranch(b.parent, b); return; }
     if (a === "add-root") { addBranch(null, project.branches[0]); return; }
     if (a === "add-end") { const last = project.branches[project.branches.length - 1]; addBranch(last ? last.id : null, last); return; }
     if (a === "add-eq") {
