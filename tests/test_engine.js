@@ -513,6 +513,14 @@ console.log("\n[16] Πολλές αντλίες: διαχωριστής, αντ�
   const l6 = r.ecById.get("e9").c, k1 = r.ncById.get("k1").m, l7 = r.ecById.get("e10").c.dP;
   close("… authority L6 = ΔPβάνας / (L6 + ΚΚΜ-1 + L7)", l6.ctrl.auth, l6.ctrl.dPv / (l6.dP + k1 + l7), 1e-12);
   truthy("… παροχή πρωτεύοντος (ψύκτης 250 kW) > δευτερεύοντος (235 kW)", r.ecById.get("e1").c.Q > r.ecById.get("e4").c.Q);
+  // Θέση από σύρσιμο: υπερισχύει της αυτόματης, οι υπολογισμοί ίδιοι, το σχέδιο χωρίς NaN
+  {
+    E.setProject(E.normalize(JSON.parse(JSON.stringify(global.window.DB.EXAMPLE))));
+    const h0 = E.calcProject().circuits.map(c => c.H).join(",");
+    E.getProject().net.nodes.find(n => n.id === "k1").grid = { u: { c: 9, r: 0 } };
+    const rg = E.calcProject(), svg = E.schematicNet(rg, true, 900).svg;
+    truthy("Σύρσιμο: ίδια H, σχέδιο χωρίς NaN, το ΚΚΜ-1 στη στήλη 9", rg.circuits.map(c => c.H).join(",") === h0 && !svg.includes("NaN") && svg.includes(`x="${60 + 9 * 290}" y="`) && E.normalize(E.getProject()).net.nodes.find(n => n.id === "k1").grid.u.c === 9);
+  }
   // Μία αντλία: τίποτα δεν αλλάζει (ίδιο αποτέλεσμα με πριν) — καλύπτεται από [11] (300 τυχαία δίκτυα)
 }
 
