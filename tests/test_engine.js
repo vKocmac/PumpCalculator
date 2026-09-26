@@ -325,7 +325,7 @@ console.log("\n[12] Αντίστροφη επιστροφή, ανοιχτό κύ
   E.setProject(E.normalize({ ...base(), net: { nodes: [Nd("A", "junction"), Nd("B", "fcu", { Q: 1 })], edges: [Pp("x", "A", "B", "Φ25", 5)] } }));
   truthy("Χωρίς αντλία → σφάλμα", E.validate(E.calcProject()).errors.some(x => x.includes("Δεν υπάρχει αντλία")));
   E.setProject(E.normalize({ ...base(), net: { nodes: [Nd("P", "pump"), Nd("P2", "pump"), Nd("A", "junction")], edges: [Pp("x", "P", "A", "Φ25", 5, { Q: 1 }), Pp("y", "A", "P", "Φ25", 5)] } }));
-  truthy("Δύο αντλίες → σφάλμα", E.validate(E.calcProject()).errors.some(x => x.includes("αντλίες")));
+  truthy("Δεύτερη αντλία χωρίς σωλήνες → σφάλμα στην αντλία", E.validate(E.calcProject()).errors.some(x => x.includes("P2: δεν έχει σωλήνα εξόδου")));
   E.setProject(E.normalize({ ...base(), net: { nodes: [Nd("P", "pump"), Nd("A", "junction"), Nd("B", "junction")],
     edges: [Pp("x", "P", "A", "Φ25", 5, { Q: 1 }), Pp("y", "A", "B", "Φ25", 5), Pp("z", "B", "A", "Φ25", 5), Pp("w", "B", "P", "Φ25", 5)] } }));
   truthy("Κυκλική ροή εκτός αντλίας → σφάλμα", E.validate(E.calcProject()).errors.some(x => x.includes("Κυκλική ροή")));
@@ -333,7 +333,7 @@ console.log("\n[12] Αντίστροφη επιστροφή, ανοιχτό κύ
   truthy("Κανένα Q πουθενά → «λείπει η παροχή», H προσωρινό", E.validate(E.calcProject()).errors.some(x => x.includes("παροχή Q")) && E.calcProject().provisional);
   E.setProject(E.normalize({ ...base(), net: { nodes: [Nd("P", "pump"), Nd("B", "buffer", { dP: 1 }), Nd("A", "junction")],
     edges: [Pp("x", "P", "B", "Φ25", 5, { Q: 1 }), Pp("y", "B", "A", "Φ25", 5), Pp("y2", "B", "A", "Φ25", 5, { Q: 0.5 }), Pp("w", "A", "P", "Φ25", 5)] } }));
-  truthy("Buffer με πολλές συνδέσεις → παρατήρηση ότι κόβει το κύκλωμα", E.validate(E.calcProject()).warns.some(x => x.includes("κόβει το κύκλωμα")));
+  truthy("Buffer μέσα σε μία ζώνη (μία αντλία) → κανονικό σημείο, ισοζύγιο 1 = 0.5 + 0.5", (() => { const r = E.calcProject(); return !E.validate(r).errors.length && Math.abs(r.ecById.get("y").c.Q - 0.5) < 1e-12; })());
 }
 // Ελλιπής σωλήνας: εκτός δυσμενέστερης
 {
@@ -414,6 +414,66 @@ console.log("\n[15] Παρεμβολή, διαγραφή ενδιάμεσου, �
   Object.assign(nb, { pipeFamily: b.pipeFamily, pipeSize: b.pipeSize, length: b.length, kind: b.kind });
   truthy("… σύνδεση A → F από το +", nb.from === "A" && nb.to === "F");
   close("… ίδιο H", E.calcProject().H, h0, 1e-12);
+}
+
+/* =========================== 16. Πολλές αντλίες =========================== */
+console.log("\n[16] Πολλές αντλίες: διαχωριστής, αντλία ανά αναχώρηση, παράλληλες, πιέσεις");
+{
+  const base = extra => ({ mode: "network", meta: {}, fluid: "water", waterTemp: 45, marginPct: 0, extras: [], branches: [], ...extra });
+  // Πρωτεύον: P1 → a → Ψύκτης → b → SEP → c → P1.  Δευτερεύον: SEP → d → S → (P2 | P3) → FCU → R → h → SEP
+  const nodes = [Nd("P1", "pump", { Q: 10 }), Nd("CH", "chiller", { dP: 30 }), Nd("SEP", "sep"), Nd("S", "header"), Nd("R", "header"),
+    Nd("P2", "pump"), Nd("P3", "pump"), Nd("F1", "fcu", { Q: 5, dP: 20 }), Nd("F2", "fcu", { Q: 4, dP: 25 })];
+  const edges = [Pp("a", "P1", "CH", "Φ50", 10), Pp("b", "CH", "SEP", "Φ50", 5), Pp("c", "SEP", "P1", "Φ50", 5),
+    Pp("d", "SEP", "S", "Φ63", 4), Pp("e1", "S", "P2", "Φ40", 1), Pp("f1", "P2", "F1", "Φ40", 20), Pp("g1", "F1", "R", "Φ40", 20),
+    Pp("e2", "S", "P3", "Φ32", 1), Pp("f2", "P3", "F2", "Φ32", 30), Pp("g2", "F2", "R", "Φ32", 30), Pp("h", "R", "SEP", "Φ63", 4)];
+  const sizes = E.lookupPipe ? null : null;
+  E.setProject(E.normalize(base({ net: { nodes, edges } })));
+  let r = E.calcProject(), v = E.validate(r);
+  truthy("Διαχωριστής: 2 ζώνες, 3 κυκλώματα αντλιών, χωρίς σφάλματα", r.zones.filter(z => z.pumps.length).length === 2 && r.circuits.length === 3 && !v.errors.length, JSON.stringify(v.errors));
+  const dp = id => r.ecById.get(id).c.dP, fp = E.fluidProps(), kPa = x => E.toM(x, "kPa", fp);
+  const C = id => r.circuits.find(c => c.pumpId === id);
+  truthy("Παροχές ζώνης 2 από το ισοζύγιο (d = h = 9, e1 = 5, e2 = 4)", [["d", 9], ["h", 9], ["e1", 5], ["e2", 4]].every(([k, q]) => Math.abs(r.ecById.get(k).c.Q - q) < 1e-12));
+  close("H P1 = a + ψύκτης + b + c", C("P1").H, dp("a") + kPa(30) + dp("b") + dp("c"), 1e-12);
+  const common = dp("h") + dp("d");
+  close("H P2 = f1 + FCU1 + g1 + κοινά (h, d) + e1", C("P2").H, dp("f1") + kPa(20) + dp("g1") + common + dp("e1"), 1e-12);
+  close("H P3 = f2 + FCU2 + g2 + κοινά (h, d) + e2", C("P3").H, dp("f2") + kPa(25) + dp("g2") + common + dp("e2"), 1e-12);
+  truthy("Q αντλιών: P1 10, P2 5, P3 4", Math.abs(C("P1").Qd - 10) < 1e-12 && Math.abs(C("P2").Qd - 5) < 1e-12 && Math.abs(C("P3").Qd - 4) < 1e-12);
+  truthy("Η P2 «βλέπει» τα κοινά (d, h) αλλά όχι τον κλάδο της P3", C("P2").eset.has("d") && C("P2").eset.has("h") && !C("P2").eset.has("f2") && !C("P2").eset.has("a"));
+  // Δοχείο διαστολής στον διαχωριστή → αναρρόφηση P1 = −c, αναρρόφηση P2/P3 = −(d + max(e1, e2))
+  E.getProject().net.nodes.find(n => n.id === "SEP").vessel = true;
+  r = E.calcProject();
+  close("Δοχείο στον διαχωριστή: αναρρόφηση P1 = −ΔP(c)", r.press.pump.get("P1").pin, -dp("c"), 1e-12);
+  close("… αναρρόφηση P2 = −(ΔP d + max ΔP e1, e2)", r.press.pump.get("P2").pin, -(dp("d") + Math.max(dp("e1"), dp("e2"))), 1e-12);
+  close("… κατάθλιψη P1 = αναρρόφηση + H", r.press.pump.get("P1").pout, -dp("c") + C("P1").base, 1e-12);
+  truthy("… παρατήρηση για αναρρόφηση κάτω από την πλήρωση", E.validate(r).warns.some(x => x.includes("αναρρόφηση") && x.includes("P1")));
+  E.getProject().net.nodes.find(n => n.id === "SEP").vessel = false;
+  E.getProject().net.nodes.find(n => n.id === "P1").vessel = true;
+  r = E.calcProject();
+  close("Δοχείο στην αναρρόφηση P1 → P1 στο 0, διαχωριστής +ΔP(c)", r.press.node.get("SEP"), dp("c"), 1e-12);
+  close("… αναρρόφηση P2 = ΔP(c) − (d + max e)", r.press.pump.get("P2").pin, dp("c") - (dp("d") + Math.max(dp("e1"), dp("e2"))), 1e-12);
+  // Δευτερεύον μεγαλύτερο από πρωτεύον → ανάμιξη
+  E.getProject().net.nodes.find(n => n.id === "P1").Q = 8;
+  truthy("Δευτερεύον 9 > πρωτεύον 8 → παρατήρηση ανάμιξης", E.validate(E.calcProject()).warns.some(x => x.includes("αναμιγνύεται")));
+  // Δευτερεύον χωρίς αντλία
+  E.setProject(E.normalize(base({ net: { nodes: [Nd("P1", "pump", { Q: 10 }), Nd("SEP", "sep"), Nd("F", "fcu", { Q: 5 })],
+    edges: [Pp("a", "P1", "SEP", "Φ50", 5), Pp("c", "SEP", "P1", "Φ50", 5), Pp("x", "SEP", "F", "Φ40", 5), Pp("y", "F", "SEP", "Φ40", 5)] } })));
+  truthy("Δευτερεύον χωρίς αντλία → «χρειάζεται δική του αντλία»", E.validate(E.calcProject()).errors.some(x => x.includes("F: δεν κυκλοφορείται")));
+  // Παράλληλες αντλίες J1 → (Pa | Pb) → J2 → FCU → J1
+  const par = qa => base({ net: { nodes: [Nd("J1", "junction"), Nd("J2", "junction"), Nd("Pa", "pump", qa ? { Q: qa } : {}), Nd("Pb", "pump"), Nd("F", "fcu", { Q: 10, dP: 20 })],
+    edges: [Pp("a1", "J1", "Pa", "Φ50", 1), Pp("a2", "Pa", "J2", "Φ50", 1), Pp("b1", "J1", "Pb", "Φ40", 1), Pp("b2", "Pb", "J2", "Φ40", 1), Pp("s", "J2", "F", "Φ63", 10), Pp("t", "F", "J1", "Φ63", 10)] } });
+  E.setProject(E.normalize(par(0)));
+  truthy("Παράλληλες χωρίς παροχή αντλίας → ζητά την παροχή κάθε αντλίας", E.validate(E.calcProject()).errors.some(x => x.includes("παροχή κάθε αντλίας")));
+  E.setProject(E.normalize(par(6)));
+  r = E.calcProject();
+  truthy("Pa 6 → Pb 4 από το ισοζύγιο, χωρίς σφάλματα", Math.abs(r.ecById.get("b2").c.Q - 4) < 1e-12 && !E.validate(r).errors.length);
+  const dq = id => r.ecById.get(id).c.dP;
+  close("H Pa = a2 + s + FCU + t + a1", r.circuits.find(c => c.pumpId === "Pa").H, dq("a2") + dq("s") + kPa(20) + dq("t") + dq("a1"), 1e-12);
+  close("H Pb = b2 + s + FCU + t + b1", r.circuits.find(c => c.pumpId === "Pb").H, dq("b2") + dq("s") + kPa(20) + dq("t") + dq("b1"), 1e-12);
+  // Αντλίες σε σειρά
+  E.setProject(E.normalize(base({ net: { nodes: [Nd("P1", "pump", { Q: 2 }), Nd("P2", "pump"), Nd("A", "fcu")],
+    edges: [Pp("x", "P1", "P2", "Φ32", 5), Pp("y", "P2", "A", "Φ32", 5), Pp("z", "A", "P1", "Φ32", 5)] } })));
+  truthy("Αντλίες σε σειρά → σφάλμα", E.validate(E.calcProject()).errors.some(x => x.includes("σε σειρά")));
+  // Μία αντλία: τίποτα δεν αλλάζει (ίδιο αποτέλεσμα με πριν) — καλύπτεται από [11] (300 τυχαία δίκτυα)
 }
 
 /* =========================== 14. Έκδοση =========================== */

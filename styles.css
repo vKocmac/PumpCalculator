@@ -404,3 +404,24 @@ body.net-full.drawer-open #c-net { right: min(610px, 100vw); }
   .pop-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dr-b .table.fit tr { grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-areas: "type type type del" "size size size size" "qty z kv out"; }
 }
+/* Πολλές αντλίες: προβολή, λίστα, τίτλοι διαδρομών */
+.viewchips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; margin-top: 4px; }
+.viewchips .vc-l { font-size: 0.8rem; color: var(--muted); }
+.viewchips button { width: auto; min-height: 32px; padding: 4px 10px; font-size: 0.8rem; font-weight: 500; border: 1px solid var(--line); border-radius: 999px; background: #FFFFFF; flex-direction: row; gap: 6px; }
+.viewchips button.on { background: var(--accent); border-color: var(--accent); color: #FFFFFF; }
+.viewchips button.on b, .viewchips button.on .num { color: #FFFFFF; }
+.viewchips em { font-style: normal; font-size: 0.72rem; color: var(--err); }
+.viewchips button.on em { color: #FFE1DC; }
+.plist { display: flex; flex-direction: column; gap: 4px; }
+.plist button { display: grid; grid-template-columns: 1fr auto; gap: 0 10px; text-align: left; padding: 8px 10px; min-height: 0; border: 1px solid var(--line); border-radius: 10px; background: #FFFFFF; font-weight: 500; }
+.plist button b { font-size: 1.05rem; }
+.plist button small { grid-column: 1 / -1; color: var(--muted); font-size: 0.76rem; }
+.plist button.on { border: 2px solid var(--accent); background: var(--accent-tint); }
+.ptitle { margin: 16px 0 6px; font-size: 0.95rem; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.ptitle .num { font-size: 0.85rem; color: var(--accent-ink); }
+.pop-dir { display: flex; margin: 2px 4px 4px; }
+.pop-dir button { flex: 1; font-size: 0.78rem; min-height: 30px; padding: 2px 6px; }
+.lg-wb { display: inline-grid; place-items: center; width: 15px; height: 15px; border-radius: 50%; background: #F5A524; color: #132033; font-style: normal; font-size: 10px; font-weight: 700; }
+.lg-vsl { display: inline-grid; place-items: center; padding: 0 3px; height: 15px; border-radius: 5px; border: 1.5px solid #0B4F86; background: #E8F1FA; color: #0B4F86; font-style: normal; font-size: 8px; font-weight: 700; }
+.pop .pop-dir button { justify-content: center; text-align: center; color: var(--muted); }
+.pop .pop-dir button.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(19, 32, 51, 0.14); }
