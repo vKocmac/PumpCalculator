@@ -275,7 +275,7 @@ window.DB = (function () {
     { id: "t", tag: "Σύν.", label: "συνολικό", double: false }
   ];
   // Τι είναι η αρχή του βρόχου (μόνο για την ετικέτα· η ΔP της δίνεται χωριστά)
-  const START_TYPES = ["Συλλέκτης", "Ψύκτης", "Λέβητας", "Αντλία θερμότητας", "Εναλλάκτης",
+  const START_TYPES = ["Αντλία", "Συλλέκτης", "Ψύκτης", "Λέβητας", "Αντλία θερμότητας", "Εναλλάκτης",
     "Buffer", "Υδραυλικός διαχωριστής", "Δεξαμενή", "Άλλο"];
 
   /* --------------------------------------------------------------------------
@@ -331,5 +331,5 @@ window.DB = (function () {
     ["Υδραυλική ισχύς", "P = ρ·g·(Q/3600)·H", "W", "Ισχύς άξονα = P/η"]
   ];
 
-  return { PIPE_FAMILIES, FITTINGS, GLYCOL_GRID, GLYCOL, FLUIDS, KINDS, START_TYPES, DEFAULTS, THEORY, VERSION: "2.1" };
+  return { PIPE_FAMILIES, FITTINGS, GLYCOL_GRID, GLYCOL, FLUIDS, KINDS, START_TYPES, DEFAULTS, THEORY, VERSION: "2.2.0" };
 })();

@@ -274,7 +274,7 @@ details.curve[open] > summary { margin-bottom: 10px; }
 .good { border: 1px solid #BFE3CB; background: var(--ok-soft); color: #1E6B3A; padding: 10px 12px; border-radius: var(--radius-sm); font-size: 0.84rem; }
 .warnTxt { color: var(--warn); } .ok { color: var(--ok); } .errTxt { color: var(--err); font-weight: 600; }
 .actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.actions .primary, .actions .danger { grid-column: 1 / -1; }
+.actions .danger { grid-column: 1 / -1; }
 .formulas { font-size: 0.8rem; color: var(--text-2); line-height: 1.5; display: grid; gap: 8px; }
 
 .site-footer { margin-top: 16px; padding: 12px; color: var(--muted); font-size: 0.82rem; text-align: center; }
@@ -308,3 +308,10 @@ details.curve[open] > summary { margin-bottom: 10px; }
   .eqrow { grid-template-columns: minmax(0, 1fr) 90px 76px 38px; gap: 6px; }
 }
 @media print { .lc-mbar, .pop { display: none !important; } }
+
+/* ---------- Έργο από προηγούμενη επίσκεψη ---------- */
+.restore { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; padding: 12px 16px; border-radius: 14px; background: var(--accent-soft); color: var(--accent-ink); border: 1px solid #B9D3EA; }
+.restore span { flex: 1 1 320px; font-size: 0.9rem; }
+.primary.alt { background: var(--accent-ink); }
+.primary.alt:hover { background: #083A63; }
+.actions .primary { grid-column: auto; }
