@@ -28,6 +28,7 @@
   let curveOpen = false;
   let selNode = null;        // επιλεγμένο σημείο στο δίκτυο
   let netFull = false;       // μεγέθυνση του σχεδίου
+  let netZoom = 1, zoomFit = false;   // zoom σχεδίου (fit = χωράει ολόκληρο)
   // Αποθήκευση στον browser ανά ΕΚΔΟΣΗ: νέα έκδοση = καθαρό ξεκίνημα.
   const APP_VERSION = (typeof window !== "undefined" && window.APP_VERSION) || DB.VERSION;
   const LS_KEY = "pumpcalc.project." + APP_VERSION;
@@ -672,9 +673,15 @@
      H κάθε αντλίας = μεγαλύτερη διαδρομή από την έξοδο ως την είσοδό της χωρίς να περάσει
      από άλλη αντλία· τα κοινά τμήματα μετράνε με τη συνολική τους παροχή. */
   const GEN_TYPES = ["chiller", "boiler", "hp", "hx"];
-  function isDecNode(n) { return !!(n && nodeType(n.type).decoupler); }
+  /* Διαχωριστής / buffer / δεξαμενή χωρίζει ζώνες μόνο με 3+ συνδέσεις· στη σειρά
+     (μία είσοδος, μία έξοδος) είναι απλός εξοπλισμός με ΔP. */
+  let splitIds = new Set();
+  function isDecNode(n) { return !!(n && splitIds.has(n.id)); }
   function zonesOf(net) {
     const nById = new Map(net.nodes.map(n => [n.id, n]));
+    const deg = new Map(net.nodes.map(n => [n.id, 0]));
+    net.edges.forEach(e => { if (e.from !== e.to) { deg.set(e.from, deg.get(e.from) + 1); deg.set(e.to, deg.get(e.to) + 1); } });
+    splitIds = new Set(net.nodes.filter(n => nodeType(n.type).decoupler && deg.get(n.id) >= 3).map(n => n.id));
     const parent = new Map(net.nodes.map(n => [n.id, n.id]));
     const find = x => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
     net.edges.forEach(e => { const a = nById.get(e.from), b = nById.get(e.to); if (a && b && !isDecNode(a) && !isDecNode(b)) { const ra = find(a.id), rb = find(b.id); if (ra !== rb) parent.set(ra, rb); } });
@@ -699,13 +706,13 @@
     walk(pumps, succ, fwd); walk(pumps, pred, bwd);
     const sinks = open ? sub.nodes.filter(n => !isP(n.id) && !g.outE.get(n.id).length).map(n => n.id) : [];
     const sources = open ? sub.nodes.filter(n => !isP(n.id) && !g.inE.get(n.id).length).map(n => n.id) : [];
-    const theP = one ? "την αντλία" : "αντλία";
+    const theP = one ? "την αντλία" : "αντλία", toP = one ? "στην αντλία" : "σε αντλία";
     if (pumps.length) sub.nodes.forEach(n => {
       if (isP(n.id)) return;
       const s = nst.get(n.id);
       if (open) { if (!fwd.has(n.id) && !bwd.has(n.id)) s.errs.push(`${nodeLabel(n)}: δεν συνδέεται με ${theP}.`); }
       else if (!fwd.has(n.id)) s.errs.push(`${nodeLabel(n)}: δεν τροφοδοτείται από ${theP}.`);
-      else if (!bwd.has(n.id)) s.errs.push(`${nodeLabel(n)}: δεν επιστρέφει σε ${theP} — κλείσε το κύκλωμα (+ → σύνδεση με την αντλία) ή δήλωσε ανοιχτό κύκλωμα.`);
+      else if (!bwd.has(n.id)) s.errs.push(`${nodeLabel(n)}: δεν επιστρέφει ${toP} — κλείσε το κύκλωμα (+ → σύνδεση με την αντλία) ή δήλωσε ανοιχτό κύκλωμα.`);
     });
     // Τοπολογική σειρά χωρίς τις αντλίες — ανιχνεύει κυκλική ροή
     const inside = sub.nodes.filter(n => !isP(n.id)).map(n => n.id);
@@ -751,6 +758,17 @@
       return { n, m, T, sIn, sOut, errs: s.errs, warns: s.warns, complete: !s.errs.length, openEnd: open && !isP(n.id) && !outs.length, source: open && !isP(n.id) && !ins.length };
     });
     const ncById = new Map(nodes.map(x => [x.n.id, x]));
+    /* Authority βάνας ελέγχου: ο κλάδος που ελέγχει = σωλήνας + τερματική μονάδα + σωλήνας επιστροφής της
+       (στο δίκτυο η μονάδα είναι ξεχωριστό σημείο, άρα προστίθεται εδώ). */
+    edges.forEach(x => {
+      const c = x.c; if (!c.ctrl) return;
+      const T = [x.e.to, x.e.from].map(id => g.nById.get(id)).find(n => n && nodeType(n.type).terminal);
+      if (!T) return;
+      let den = c.dP + ncById.get(T.id).m;
+      const other = (T.id === x.e.to ? g.outE : g.inE).get(T.id);
+      if (other.length === 1) { const o = ecById.get(other[0]); if (isFinite(o.c.dP)) den += o.c.dP; }
+      if (den > 0) { c.ctrl.auth = c.ctrl.dPv / den; c.ctrl.branch = true; }
+    });
     const zoneInc = topoErr.length > 0 || edges.some(x => !x.c.complete) || nodes.some(x => !x.complete);
 
     // Μεγαλύτερη διαδρομή (γράφος χωρίς κύκλους, τοπολογική σειρά). Άλλες αντλίες δεν περνιούνται.
@@ -991,7 +1009,7 @@
     if (pr && pr.vessel) {
       const vx = nodeLabel(g.nById.get(pr.vessel));
       pr.pump.forEach((v, pid) => {
-        if (v.pin < -0.05) warns.push(`${nodeLabel(g.nById.get(pid))}: η αναρρόφηση είναι ${fmt(-toKPa(v.pin, res.fp), 1)} kPa κάτω από την πίεση πλήρωσης (δοχείο διαστολής στο «${vx}»). Η πίεση πλήρωσης πρέπει να καλύπτει και αυτά — αλλιώς κίνδυνος σπηλαίωσης ή αέρα στα ψηλά σημεία. Με το δοχείο στην αναρρόφηση ή στον διαχωριστή μηδενίζεται.`);
+        if (-toKPa(v.pin, res.fp) > (D.suctionWarnKPa || 20)) warns.push(`${nodeLabel(g.nById.get(pid))}: η αναρρόφηση είναι ${fmt(-toKPa(v.pin, res.fp), 1)} kPa κάτω από την πίεση πλήρωσης (δοχείο διαστολής στο «${vx}»). Η πίεση πλήρωσης πρέπει να καλύπτει και αυτά — αλλιώς κίνδυνος σπηλαίωσης ή αέρα στα ψηλά σημεία. Με το δοχείο στην αναρρόφηση ή στον διαχωριστή μηδενίζεται.`);
       });
       pr.unknown.forEach(zi => warns.push(`Η ζώνη της ${res.zones[zi].pumps.map(id => nodeLabel(g.nById.get(id))).join(", ")} δεν συνδέεται με το δοχείο διαστολής, ούτε μέσω διαχωριστή — ανεξάρτητο κύκλωμα θέλει δικό του δοχείο.`));
     }
@@ -1340,7 +1358,8 @@
         ${others.length ? `<div class="pop-sub">ή σωλήνας ${into ? "<b>από υπάρχον</b> σημείο" : "προς <b>υπάρχον</b> σημείο"}:</div>
         <div class="pop-list">${others.map(o => `<button data-act="connect" data-from="${esc(into ? o.id : n.id)}" data-to="${esc(into ? n.id : o.id)}" class="${rank(o) < 2 && !into ? "hl" : ""}"><b>${into ? `${esc(nodeLabel(o))} →` : `→ ${esc(nodeLabel(o))}`}</b><small>${esc(tag(o))}</small></button>`).join("")}</div>` : ""}`;
     }
-    const wrap = $("#schemWrap"), outer = $("#schemOuter"), a = (e ? edgeAnchors.get(e.id) : netAnchors.get(n.id)) || { x: 0, y: 0, hw: 0 };
+    const wrap = $("#schemWrap"), outer = $("#schemOuter"), a0 = (e ? edgeAnchors.get(e.id) : netAnchors.get(n.id)) || { x: 0, y: 0, hw: 0 };
+    const a = { x: a0.x * netZoom, y: a0.y * netZoom, hw: a0.hw * netZoom };
     const sx = wrap ? wrap.scrollLeft : 0, sy = wrap ? wrap.scrollTop : 0, ow = outer ? outer.clientWidth : 1000, pw = Math.min(410, ow - 8);
     let left = a.x + a.hw + 20 - sx;
     if (left + pw > ow) left = Math.max(4, a.x - a.hw - pw - 20 - sx);
@@ -1505,6 +1524,12 @@
         <div class="card-h">
           <h2>Δίκτυο</h2>
           <div class="hbtns">
+            <div class="zoomctl" role="group" aria-label="Zoom σχεδίου">
+              <button class="ghost small" data-act="zoom" data-v="out" title="Σμίκρυνση (Ctrl + ροδέλα)" aria-label="Σμίκρυνση">−</button>
+              <button class="ghost small zl" data-act="zoom" data-v="1" title="Πραγματικό μέγεθος"><span id="zoomLbl">${Math.round(netZoom * 100)} %</span></button>
+              <button class="ghost small" data-act="zoom" data-v="in" title="Μεγέθυνση (Ctrl + ροδέλα)" aria-label="Μεγέθυνση">+</button>
+              <button class="ghost small ${zoomFit ? "on" : ""}" data-act="zoom" data-v="fit" title="Να χωράει ολόκληρο">Χωράει</button>
+            </div>
             <button class="ghost small" data-act="net-expand" aria-pressed="${netFull}">${netFull ? "✕ Κλείσιμο μεγέθυνσης" : "⤢ Μεγέθυνση"}</button>
             <div class="segctl" role="group" aria-label="Τρόπος υπολογισμού">
               <button data-act="mode" data-mode="simple" aria-pressed="false">Απλή διαδρομή</button>
@@ -1717,9 +1742,23 @@
     const host = $("#schem"), wrap = $("#schemWrap"); if (!host || !wrap) return;
     const avail = Math.max(640, wrap.clientWidth - 2);
     const sl = wrap.scrollLeft, st = wrap.scrollTop;
-    host.innerHTML = schematicNet(res, true, avail).svg;
+    const sc = schematicNet(res, true, zoomFit ? 640 : avail);
+    host.innerHTML = sc.svg;
+    if (zoomFit) netZoom = Math.max(0.25, Math.min(1.5, (wrap.clientWidth - 4) / sc.W, netFull ? (wrap.clientHeight - 4) / sc.H : Infinity));
+    const svg = host.firstElementChild;
+    if (svg && netZoom !== 1) { svg.setAttribute("width", Math.round(sc.W * netZoom)); svg.setAttribute("height", Math.round(sc.H * netZoom)); }
     wrap.scrollLeft = sl; wrap.scrollTop = st;
+    const zl = $("#zoomLbl"); if (zl) zl.textContent = Math.round(netZoom * 100) + " %";
     renderNetPop(res);
+  }
+  function setZoom(z, fit) {
+    const wrap = $("#schemWrap"), old = netZoom;
+    zoomFit = !!fit;
+    if (!fit) netZoom = Math.max(0.25, Math.min(2.5, z));
+    const cx = wrap ? wrap.scrollLeft + wrap.clientWidth / 2 : 0, cy = wrap ? wrap.scrollTop + wrap.clientHeight / 2 : 0;
+    pop = null;
+    renderSchematic(calcProject());
+    if (wrap && !fit) { const k = netZoom / old; wrap.scrollLeft = cx * k - wrap.clientWidth / 2; wrap.scrollTop = cy * k - wrap.clientHeight / 2; }
   }
 
   function renderBranchOutputs(entry, res) {
@@ -1768,7 +1807,7 @@
       z.classList.toggle("dim", r.method === "Kv"); k.classList.toggle("dim", r.method !== "Kv");
     });
     $("#subFit").textContent = br.fittings.length ? fmt(c.sumFit) + " mwc" : "";
-    $("#authInfo").innerHTML = c.ctrl ? `Βάνα ελέγχου: ΔP <b class="num">${fmt(toKPa(c.ctrl.dPv, fp), 1)} kPa</b> · authority β = <b class="num ${c.ctrl.auth < D.authMin ? "warnTxt" : "ok"}">${fmt(c.ctrl.auth, 2)}</b> (στόχος ≥ ${D.authMin})` : "";
+    $("#authInfo").innerHTML = c.ctrl ? `Βάνα ελέγχου: ΔP <b class="num">${fmt(toKPa(c.ctrl.dPv, fp), 1)} kPa</b> · authority β = <b class="num ${c.ctrl.auth < D.authMin ? "warnTxt" : "ok"}">${fmt(c.ctrl.auth, 2)}</b> (στόχος ≥ ${D.authMin})${c.ctrl.branch ? " — ως προς βάνα + σωλήνα + τερματική μονάδα + επιστροφή της" : ""}` : "";
     $("#subEq").textContent = (br.equip || []).length ? fmt(c.sumEquip) + " mwc" : "";
     $("#brTotLbl").textContent = `ΔP ${net ? "σωλήνα" : "κλάδου"} ${branchLabel(br)}`;
     $("#brTot").textContent = `${fmt(c.dP)} mwc · ${fmt(toKPa(c.dP, fp), 1)} kPa`;
@@ -1826,6 +1865,7 @@
         <button class="primary alt" data-act="save-html" title="Αρχείο .html που ανοίγει το εργαλείο συμπληρωμένο">Αποθήκευση έργου</button>
         <button data-act="save">Αποθήκευση .json</button>
         <button data-act="load">Άνοιγμα αρχείου</button>
+        <button data-act="example" title="Ψυχρό νερό, πρωτεύον/δευτερεύον με διαχωριστή, 4 αντλίες, πλήρη στοιχεία">Παράδειγμα</button>
         <button class="danger" data-act="new">Νέο έργο</button>
       </div>
       <details class="mini"><summary>Τύποι υπολογισμού</summary><div class="formulas">${DB.THEORY.map(t => `<div><b>${esc(t[0])}</b><br><code>${esc(t[1])}</code>${t[3] ? `<br><span class="muted">${esc(t[3])}</span>` : ""}</div>`).join("")}</div></details>`;
@@ -2096,7 +2136,8 @@
       if (a === "del-node") { delNode(id); return; }
       if (a === "del") { delEdge(id); return; }
       if (a === "close-drawer") { selId = null; selNode = null; render(); return; }
-      if (a === "net-expand") { netFull = !netFull; render(); return; }
+      if (a === "net-expand") { netFull = !netFull; zoomFit = netFull; if (!netFull) netZoom = 1; render(); return; }
+      if (a === "zoom") { const v = t.dataset.v; setZoom(v === "in" ? netZoom * 1.2 : v === "out" ? netZoom / 1.2 : 1, v === "fit"); const f = $('[data-act="zoom"][data-v="fit"]'); if (f) f.classList.toggle("on", zoomFit); return; }
     }
     if (a === "pick") { selId = id; pop = null; render(); scrollToEl("#sec-branch"); return; }
     if (a === "add-end") { const last = project.branches[project.branches.length - 1]; addBranch(last ? last.id : null, last); return; }
@@ -2118,6 +2159,7 @@
     if (a === "restore-no") { restorable = null; render(); return; }
     if (a === "load") { $("#fileInput").click(); return; }
     if (a === "to-side") { const s = $("#side"); if (s) s.scrollIntoView({ behavior: "smooth" }); return; }
+    if (a === "example") { snap(); project = normalize(JSON.parse(JSON.stringify(DB.EXAMPLE))); project.meta.date = new Date().toISOString().slice(0, 10); selId = null; selNode = null; pop = null; netFull = false; render(); toast("Άνοιξε το παράδειγμα. Πάτα σημεία και σωλήνες για τα στοιχεία τους.", true); return; }
     if (a === "new") { snap(); project = blankProject(); selId = null; selNode = null; pop = null; render(); toast("Νέο έργο.", true); return; }
   }
   function onKey(e) {
@@ -2159,6 +2201,11 @@
     document.addEventListener("change", onChange);
     document.addEventListener("click", onClick);
     document.addEventListener("keydown", onKey);
+    document.addEventListener("wheel", e => {
+      if (!(e.ctrlKey || e.metaKey) || !e.target.closest || !e.target.closest("#schemWrap")) return;
+      e.preventDefault(); setZoom(netZoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1), false);
+      const f = $('[data-act="zoom"][data-v="fit"]'); if (f) f.classList.toggle("on", false);
+    }, { passive: false });
   }
 
   /* ---------------- PERSISTENCE ---------------- */

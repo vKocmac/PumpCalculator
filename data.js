@@ -324,6 +324,7 @@ window.DB = (function () {
     reLam: 2300, reTurb: 4000,
     // Βάνες
     authMin: 0.5, authLow: 0.25,   // authority βάνας ελέγχου
+    suctionWarnKPa: 20,            // αναρρόφηση κάτω από την πλήρωση πάνω από αυτό → παρατήρηση
     balMinKPa: 3,                  // ελάχιστη ΔP βάνας εξισορρόπησης για μέτρηση
     // Ισοζύγιο παροχών (επιτρεπτή απόκλιση)
     qBalTol: 0.02
@@ -360,5 +361,68 @@ window.DB = (function () {
     ["Υδραυλική ισχύς", "P = ρ·g·(Q/3600)·H", "W", "Ισχύς άξονα = P/η"]
   ];
 
-  return { PIPE_FAMILIES, FITTINGS, GLYCOL_GRID, GLYCOL, FLUIDS, KINDS, START_TYPES, NODE_TYPES, DEFAULTS, THEORY, VERSION: "2.5.0" };
+
+  /* --------------------------------------------------------------------------
+     ΠΑΡΑΔΕΙΓΜΑ (κουμπί «Παράδειγμα»): ψυχρό νερό 7/12 °C, ψύκτης 250 kW,
+     πρωτεύον με αντλία ψύκτη, διαχωριστής, συλλέκτης με αντλία σε κάθε αναχώρηση,
+     υποσυλλέκτης (ΚΚΜ-1 + FCU), κοινή επιστροφή → buffer → διαχωριστής.
+     Σιδηροσωλήνας, εξαρτήματα και βάνες με Kv· χωρίς σφάλματα και παρατηρήσεις.
+     ------------------------------------------------------------------------ */
+  const EXAMPLE = {
+    "v": 4,
+    "mode": "network",
+    "meta": {"name": "Παράδειγμα — ψυχρό νερό πρωτεύον/δευτερεύον", "code": "ΠΑΡ-01", "date": "", "engineer": ""},
+    "fluid": "water",
+    "concPct": 30,
+    "waterTemp": 7,
+    "dT": 5,
+    "marginPct": 10,
+    "openCircuit": false,
+    "staticHead": "",
+    "aged": false,
+    "extras": [],
+    "branches": [],
+    "start": {"type": "Αντλία", "label": "", "dP": "", "unit": "kPa"},
+    "pump": {"points": [{"Q": "", "H": ""}, {"Q": "", "H": ""}, {"Q": "", "H": ""}], "eta": ""},
+    "net": {
+      "nodes": [
+        {"id": "sep", "type": "sep", "label": "Διαχωριστής", "dP": 1, "unit": "kPa", "Q": "", "loadKW": "", "vessel": true},
+        {"id": "pch", "type": "pump", "label": "Αντλία ψύκτη", "dP": "", "unit": "kPa", "Q": "", "loadKW": ""},
+        {"id": "ch", "type": "chiller", "label": "Ψύκτης 250 kW", "dP": 45, "unit": "kPa", "Q": "", "loadKW": 250},
+        {"id": "s1", "type": "header", "label": "Συλλέκτης προσαγωγής", "dP": 1, "unit": "kPa", "Q": "", "loadKW": ""},
+        {"id": "p2", "type": "pump", "label": "Αντλία ΚΚΜ-1 / FCU", "dP": "", "unit": "kPa", "Q": "", "loadKW": ""},
+        {"id": "p3", "type": "pump", "label": "Αντλία ΚΚΜ-2", "dP": "", "unit": "kPa", "Q": "", "loadKW": ""},
+        {"id": "p4", "type": "pump", "label": "Αντλία ΚΚΜ-3", "dP": "", "unit": "kPa", "Q": "", "loadKW": ""},
+        {"id": "s2", "type": "header", "label": "Υποσυλλέκτης", "dP": 1, "unit": "kPa", "Q": "", "loadKW": ""},
+        {"id": "k1", "type": "coil", "label": "ΚΚΜ-1", "dP": 30, "unit": "kPa", "Q": "", "loadKW": 60},
+        {"id": "fc", "type": "fcu", "label": "FCU ορόφων", "dP": 25, "unit": "kPa", "Q": "", "loadKW": 35},
+        {"id": "k2", "type": "coil", "label": "ΚΚΜ-2", "dP": 35, "unit": "kPa", "Q": "", "loadKW": 90},
+        {"id": "k3", "type": "coil", "label": "ΚΚΜ-3", "dP": 30, "unit": "kPa", "Q": "", "loadKW": 50},
+        {"id": "r1", "type": "header", "label": "Συλλέκτης επιστροφής", "dP": 1, "unit": "kPa", "Q": "", "loadKW": ""},
+        {"id": "buf", "type": "buffer", "label": "Buffer 1000 l", "dP": 2, "unit": "kPa", "Q": "", "loadKW": ""}
+      ],
+      "edges": [
+        {"id": "e1", "code": "Π1", "desc": "Αναρρόφηση αντλίας ψύκτη", "from": "sep", "to": "pch", "pipeFamily": "Σιδηροσωλήνας (μαύρος)", "pipeSize": "DN100", "length": 4, "kind": "t", "direct": false, "Q": "", "loadKW": "", "fittings": [{"type": "Βάνα πεταλούδα (butterfly) ανοιχτή", "size": "", "qty": 1, "zeta": 0.6, "kv": ""}, {"type": "Φίλτρο Y-strainer", "size": "", "qty": 1, "zeta": "", "kv": 250}, {"type": "Αντικραδασμικός σύνδεσμος", "size": "", "qty": 1, "zeta": 0.4, "kv": ""}, {"type": "Συστολή σταδιακή (gradual reducer)", "size": "", "qty": 1, "zeta": 0.3, "kv": ""}], "equip": []},
+        {"id": "e2", "code": "Π2", "desc": "Προς ψύκτη", "from": "pch", "to": "ch", "pipeFamily": "Σιδηροσωλήνας (μαύρος)", "pipeSize": "DN100", "length": 8, "kind": "t", "direct": false, "Q": "", "loadKW": "", "fittings": [{"type": "Διαστολή σταδιακή (diffuser)", "size": "", "qty": 1, "zeta": 0.5, "kv": ""}, {"type": "Αντικραδασμικός σύνδεσμος", "size": "", "qty": 1, "zeta": 0.4, "kv": ""}, {"type": "Αντεπίστροφο spring (disc)", "size": "", "qty": 1, "zeta": "", "kv": 250}, {"type": "Βάνα πεταλούδα (butterfly) ανοιχτή", "size": "", "qty": 1, "zeta": 0.6, "kv": ""}, {"type": "Γωνία 90° συγκολλητή/χυτή", "size": "", "qty": 2, "zeta": 0.3, "kv": ""}, {"type": "Βάνα πεταλούδα (butterfly) ανοιχτή", "size": "", "qty": 1, "zeta": 0.6, "kv": ""}, {"type": "Γωνία 90° συγκολλητή/χυτή", "size": "", "qty": 2, "zeta": 0.3, "kv": ""}], "equip": []},
+        {"id": "e3", "code": "Π3", "desc": "Από ψύκτη προς διαχωριστή", "from": "ch", "to": "sep", "pipeFamily": "Σιδηροσωλήνας (μαύρος)", "pipeSize": "DN100", "length": 8, "kind": "t", "direct": false, "Q": "", "loadKW": "", "fittings": [{"type": "Βάνα πεταλούδα (butterfly) ανοιχτή", "size": "", "qty": 1, "zeta": 0.6, "kv": ""}, {"type": "Γωνία 90° συγκολλητή/χυτή", "size": "", "qty": 4, "zeta": 0.3, "kv": ""}, {"type": "Ταφ — ροή ευθεία (run)", "size": "", "qty": 1, "zeta": 0.6, "kv": ""}], "equip": []},
+        {"id": "e4", "code": "L1", "desc": "Διαχωριστής → συλλέκτης", "from": "sep", "to": "s1", "pipeFamily": "Σιδηροσωλήνας (μαύρος)", "pipeSize": "DN100", "length": 4, "kind": "t", "direct": false, "Q": "", "loadKW": "", "fittings": [{"type": "Γωνία 90° συγκολλητή/χυτή", "size": "", "qty": 2, "zeta": 0.3, "kv": ""}, {"type": "Βάνα πεταλούδα (butterfly) ανοιχτή", "size": "", "qty": 1, "zeta": 0.6, "kv": ""}], "equip": []},
+        {"id": "e5", "code": "L2", "desc": "Αναρρόφηση αντλίας ΚΚΜ-1/FCU", "from": "s1", "to": "p2", "pipeFamily": "Σιδηροσωλήνας (μαύρος)", "pipeSize": "DN80", "length": 1.5, "kind": "t", "direct": false, "Q": "", "loadKW": "", "fittings": [{"type": "Βάνα πεταλούδα (butterfly) ανοιχτή", "size": "", "qty": 1, "zeta": 0.6, "kv": ""}, {"type": "Φίλτρο Y-strainer", "size": "", "qty": 1, "zeta": "", "kv": 160}, {"type": "Αντικραδασμικός σύνδεσμος", "size": "", "qty": 1, "zeta": 0.4, "kv": ""}, {"type": "Συστολή σταδιακή (gradual reducer)", "size": "", "qty": 1, "zeta": 0.3, "kv": ""}], "equip": []},
+        {"id": "e6", "code": "L3", "desc": "Αναρρόφηση αντλίας ΚΚΜ-2", "from": "s1", "to": "p3", "pipeFamily": "Σιδηροσωλήνας (μαύρος)", "pipeSize": "DN80", "length": 1.5, "kind": "t", "direct": false, "Q": "", "loadKW": "", "fittings": [{"type": "Βάνα πεταλούδα (butterfly) ανοιχτή", "size": "", "qty": 1, "zeta": 0.6, "kv": ""}, {"type": "Φίλτρο Y-strainer", "size": "", "qty": 1, "zeta": "", "kv": 160}, {"type": "Αντικραδασμικός σύνδεσμος", "size": "", "qty": 1, "zeta": 0.4, "kv": ""}, {"type": "Συστολή σταδιακή (gradual reducer)", "size": "", "qty": 1, "zeta": 0.3, "kv": ""}], "equip": []},
+        {"id": "e7", "code": "L4", "desc": "Αναρρόφηση αντλίας ΚΚΜ-3", "from": "s1", "to": "p4", "pipeFamily": "Σιδηροσωλήνας (μαύρος)", "pipeSize": "DN65", "length": 1.5, "kind": "t", "direct": false, "Q": "", "loadKW": "", "fittings": [{"type": "Βάνα πεταλούδα (butterfly) ανοιχτή", "size": "", "qty": 1, "zeta": 0.6, "kv": ""}, {"type": "Φίλτρο Y-strainer", "size": "", "qty": 1, "zeta": "", "kv": 100}, {"type": "Αντικραδασμικός σύνδεσμος", "size": "", "qty": 1, "zeta": 0.4, "kv": ""}, {"type": "Συστολή σταδιακή (gradual reducer)", "size": "", "qty": 1, "zeta": 0.3, "kv": ""}], "equip": []},
+        {"id": "e8", "code": "L5", "desc": "Κατάθλιψη → υποσυλλέκτης", "from": "p2", "to": "s2", "pipeFamily": "Σιδηροσωλήνας (μαύρος)", "pipeSize": "DN80", "length": 10, "kind": "t", "direct": false, "Q": "", "loadKW": "", "fittings": [{"type": "Διαστολή σταδιακή (diffuser)", "size": "", "qty": 1, "zeta": 0.5, "kv": ""}, {"type": "Αντικραδασμικός σύνδεσμος", "size": "", "qty": 1, "zeta": 0.4, "kv": ""}, {"type": "Αντεπίστροφο spring (disc)", "size": "", "qty": 1, "zeta": "", "kv": 160}, {"type": "Βάνα πεταλούδα (butterfly) ανοιχτή", "size": "", "qty": 1, "zeta": 0.6, "kv": ""}, {"type": "Γωνία 90° συγκολλητή/χυτή", "size": "", "qty": 2, "zeta": 0.3, "kv": ""}], "equip": []},
+        {"id": "e9", "code": "L6", "desc": "Προσαγωγή ΚΚΜ-1", "from": "s2", "to": "k1", "pipeFamily": "Σιδηροσωλήνας (μαύρος)", "pipeSize": "DN65", "length": 25, "kind": "t", "direct": false, "Q": "", "loadKW": "", "fittings": [{"type": "Γωνία 90° συγκολλητή/χυτή", "size": "", "qty": 4, "zeta": 0.3, "kv": ""}, {"type": "Βάνα πεταλούδα (butterfly) ανοιχτή", "size": "", "qty": 1, "zeta": 0.6, "kv": ""}, {"type": "Φίλτρο Y-strainer", "size": "", "qty": 1, "zeta": "", "kv": 100}, {"type": "Βάνα ελέγχου 2οδη (Kv από φύλλο)", "size": "", "qty": 1, "zeta": "", "kv": 14}], "equip": []},
+        {"id": "e10", "code": "L7", "desc": "Επιστροφή ΚΚΜ-1", "from": "k1", "to": "r1", "pipeFamily": "Σιδηροσωλήνας (μαύρος)", "pipeSize": "DN65", "length": 25, "kind": "t", "direct": false, "Q": "", "loadKW": "", "fittings": [{"type": "Γωνία 90° συγκολλητή/χυτή", "size": "", "qty": 4, "zeta": 0.3, "kv": ""}, {"type": "Ρυθμιστική / εξισορρόπησης", "size": "", "qty": 1, "zeta": "", "kv": 40}, {"type": "Βάνα πεταλούδα (butterfly) ανοιχτή", "size": "", "qty": 1, "zeta": 0.6, "kv": ""}], "equip": []},
+        {"id": "e11", "code": "L8", "desc": "Προσαγωγή FCU ορόφων", "from": "s2", "to": "fc", "pipeFamily": "Σιδηροσωλήνας (μαύρος)", "pipeSize": "DN50", "length": 40, "kind": "t", "direct": false, "Q": "", "loadKW": "", "fittings": [{"type": "Γωνία 90° συγκολλητή/χυτή", "size": "", "qty": 4, "zeta": 0.3, "kv": ""}, {"type": "Βάνα πεταλούδα (butterfly) ανοιχτή", "size": "", "qty": 1, "zeta": 0.6, "kv": ""}, {"type": "Φίλτρο Y-strainer", "size": "", "qty": 1, "zeta": "", "kv": 60}, {"type": "Βάνα ελέγχου 2οδη (Kv από φύλλο)", "size": "", "qty": 1, "zeta": "", "kv": 8}], "equip": []},
+        {"id": "e12", "code": "L9", "desc": "Επιστροφή FCU ορόφων", "from": "fc", "to": "r1", "pipeFamily": "Σιδηροσωλήνας (μαύρος)", "pipeSize": "DN50", "length": 40, "kind": "t", "direct": false, "Q": "", "loadKW": "", "fittings": [{"type": "Γωνία 90° συγκολλητή/χυτή", "size": "", "qty": 4, "zeta": 0.3, "kv": ""}, {"type": "Ρυθμιστική / εξισορρόπησης", "size": "", "qty": 1, "zeta": "", "kv": 25}, {"type": "Βάνα πεταλούδα (butterfly) ανοιχτή", "size": "", "qty": 1, "zeta": 0.6, "kv": ""}], "equip": []},
+        {"id": "e13", "code": "L10", "desc": "Προσαγωγή ΚΚΜ-2", "from": "p3", "to": "k2", "pipeFamily": "Σιδηροσωλήνας (μαύρος)", "pipeSize": "DN80", "length": 30, "kind": "t", "direct": false, "Q": "", "loadKW": "", "fittings": [{"type": "Διαστολή σταδιακή (diffuser)", "size": "", "qty": 1, "zeta": 0.5, "kv": ""}, {"type": "Αντικραδασμικός σύνδεσμος", "size": "", "qty": 1, "zeta": 0.4, "kv": ""}, {"type": "Αντεπίστροφο spring (disc)", "size": "", "qty": 1, "zeta": "", "kv": 160}, {"type": "Βάνα πεταλούδα (butterfly) ανοιχτή", "size": "", "qty": 1, "zeta": 0.6, "kv": ""}, {"type": "Γωνία 90° συγκολλητή/χυτή", "size": "", "qty": 2, "zeta": 0.3, "kv": ""}, {"type": "Γωνία 90° συγκολλητή/χυτή", "size": "", "qty": 4, "zeta": 0.3, "kv": ""}, {"type": "Βάνα πεταλούδα (butterfly) ανοιχτή", "size": "", "qty": 1, "zeta": 0.6, "kv": ""}, {"type": "Φίλτρο Y-strainer", "size": "", "qty": 1, "zeta": "", "kv": 160}, {"type": "Βάνα ελέγχου 2οδη (Kv από φύλλο)", "size": "", "qty": 1, "zeta": "", "kv": 20}], "equip": []},
+        {"id": "e14", "code": "L11", "desc": "Επιστροφή ΚΚΜ-2", "from": "k2", "to": "r1", "pipeFamily": "Σιδηροσωλήνας (μαύρος)", "pipeSize": "DN80", "length": 30, "kind": "t", "direct": false, "Q": "", "loadKW": "", "fittings": [{"type": "Γωνία 90° συγκολλητή/χυτή", "size": "", "qty": 4, "zeta": 0.3, "kv": ""}, {"type": "Ρυθμιστική / εξισορρόπησης", "size": "", "qty": 1, "zeta": "", "kv": 60}, {"type": "Βάνα πεταλούδα (butterfly) ανοιχτή", "size": "", "qty": 1, "zeta": 0.6, "kv": ""}], "equip": []},
+        {"id": "e15", "code": "L12", "desc": "Προσαγωγή ΚΚΜ-3", "from": "p4", "to": "k3", "pipeFamily": "Σιδηροσωλήνας (μαύρος)", "pipeSize": "DN65", "length": 20, "kind": "t", "direct": false, "Q": "", "loadKW": "", "fittings": [{"type": "Διαστολή σταδιακή (diffuser)", "size": "", "qty": 1, "zeta": 0.5, "kv": ""}, {"type": "Αντικραδασμικός σύνδεσμος", "size": "", "qty": 1, "zeta": 0.4, "kv": ""}, {"type": "Αντεπίστροφο spring (disc)", "size": "", "qty": 1, "zeta": "", "kv": 100}, {"type": "Βάνα πεταλούδα (butterfly) ανοιχτή", "size": "", "qty": 1, "zeta": 0.6, "kv": ""}, {"type": "Γωνία 90° συγκολλητή/χυτή", "size": "", "qty": 2, "zeta": 0.3, "kv": ""}, {"type": "Γωνία 90° συγκολλητή/χυτή", "size": "", "qty": 4, "zeta": 0.3, "kv": ""}, {"type": "Βάνα πεταλούδα (butterfly) ανοιχτή", "size": "", "qty": 1, "zeta": 0.6, "kv": ""}, {"type": "Φίλτρο Y-strainer", "size": "", "qty": 1, "zeta": "", "kv": 100}, {"type": "Βάνα ελέγχου 2οδη (Kv από φύλλο)", "size": "", "qty": 1, "zeta": "", "kv": 12.5}], "equip": []},
+        {"id": "e16", "code": "L13", "desc": "Επιστροφή ΚΚΜ-3", "from": "k3", "to": "r1", "pipeFamily": "Σιδηροσωλήνας (μαύρος)", "pipeSize": "DN65", "length": 20, "kind": "t", "direct": false, "Q": "", "loadKW": "", "fittings": [{"type": "Γωνία 90° συγκολλητή/χυτή", "size": "", "qty": 4, "zeta": 0.3, "kv": ""}, {"type": "Ρυθμιστική / εξισορρόπησης", "size": "", "qty": 1, "zeta": "", "kv": 30}, {"type": "Βάνα πεταλούδα (butterfly) ανοιχτή", "size": "", "qty": 1, "zeta": 0.6, "kv": ""}], "equip": []},
+        {"id": "e17", "code": "L14", "desc": "Επιστροφή → buffer", "from": "r1", "to": "buf", "pipeFamily": "Σιδηροσωλήνας (μαύρος)", "pipeSize": "DN100", "length": 6, "kind": "t", "direct": false, "Q": "", "loadKW": "", "fittings": [{"type": "Γωνία 90° συγκολλητή/χυτή", "size": "", "qty": 2, "zeta": 0.3, "kv": ""}, {"type": "Βάνα πεταλούδα (butterfly) ανοιχτή", "size": "", "qty": 1, "zeta": 0.6, "kv": ""}], "equip": []},
+        {"id": "e18", "code": "L15", "desc": "Buffer → διαχωριστής", "from": "buf", "to": "sep", "pipeFamily": "Σιδηροσωλήνας (μαύρος)", "pipeSize": "DN100", "length": 3, "kind": "t", "direct": false, "Q": "", "loadKW": "", "fittings": [{"type": "Γωνία 90° συγκολλητή/χυτή", "size": "", "qty": 2, "zeta": 0.3, "kv": ""}, {"type": "Βάνα πεταλούδα (butterfly) ανοιχτή", "size": "", "qty": 1, "zeta": 0.6, "kv": ""}], "equip": []}
+      ]
+    }
+  };
+
+  return { EXAMPLE, PIPE_FAMILIES, FITTINGS, GLYCOL_GRID, GLYCOL, FLUIDS, KINDS, START_TYPES, NODE_TYPES, DEFAULTS, THEORY, VERSION: "2.5.1" };
 })();
