@@ -171,7 +171,7 @@ truthy("2 διαδρομές, δυσμενέστερη μέσω C", rn.paths.len
 close("Παροχή αντλίας = 4", rn.Qd, 4, 1e-12);
 const pB = rn.paths.find(p => p.edges.includes("B"));
 close("Στραγγαλισμός διαδρομής B", pB.excess, (dA + dC) - (dA + dB), 1e-12);
-close("Kv εξισορρόπησης = Q/√ΔP[bar] (Q του κλάδου 2.5)", pB.kvReq, 2.5 / Math.sqrt(pB.excessKPa / 100), 1e-12);
+close("Kv εξισορρόπησης = Q·√(SG/ΔP[bar]) (Q του κλάδου 2.5, SG = ρ/1000)", pB.kvReq, 2.5 * Math.sqrt((E.fluidProps().rho / 1000) / (pB.excessKPa / 100)), 1e-9);
 close("Π+Ε: L διπλάσιο (B 2×20 m)", rn.ecById.get("B").c.pipe.Leff, 40, 1e-12);
 close("Εξοπλισμός σωλήνα σε m", rn.ecById.get("C").c.sumEquip, 15 * 1000 / (fpw.rho * 9.81), 1e-12);
 truthy("Ισοζύγιο 2.5+1.5 = 4 → χωρίς σφάλμα", !E.validate(rn).errors.length);
@@ -288,7 +288,9 @@ for (let n = 0; n < 300; n++) {
     && rr.paths.length === term.length && !rr.provisional && Math.abs(rr.Qd - tot) < 1e-9 && !E.validate(rr).errors.length;
   if (ok) okNets++; else badNets.push(n);
   const svg = E.schematicNet(rr, true, 900).svg;
-  if (!edges.every(e => svg.includes(`>${e.id}<`))) badNets.push("svg" + n);
+  if (!edges.every(e => svg.includes(`>${e.id}<`)) || svg.includes("NaN")) badNets.push("svg" + n);
+  const svgL = (E.getProject().draw = "line", E.schematicNet(rr, true, 900).svg); E.getProject().draw = "u";
+  if (svgL.includes("NaN")) badNets.push("svgL" + n);
 }
 truthy(`300/300 δίκτυα: παροχές από ισοζύγιο, H, δυσμενέστερη, Q αντλίας (${okNets} σωστά)`, badNets.length === 0, badNets.slice(0, 5).join(","));
 

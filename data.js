@@ -356,7 +356,8 @@ window.DB = (function () {
     ["ΔP εξαρτ. (ζ)", "ΔP = ζ·(v²/2g)·τεμ", "mwc", "v της διατομής του εξαρτήματος"],
     ["ΔP εξαρτ. (Kv)", "ΔP = (Q/Kv)²·10.197·τεμ", "mwc", "Όταν δοθεί Kv (υπερισχύει του ζ)"],
     ["Authority βάνας ελέγχου", "β = ΔP_βάνας / ΔP_κλάδου της βάνας", "—", "Στόχος ≥ 0.5"],
-    ["Εξισορρόπηση", "ΔP_περίσσεια = ΔP_δυσμ. − ΔP_κυκλώματος · Kv = Q/√(ΔP[bar])", "kPa", ""],
+    ["Εξισορρόπηση", "ΔP_περίσσεια = ΔP_δυσμ. − ΔP_κυκλώματος · Kv = Q·√(SG/ΔP[bar]), SG = ρ/1000", "kPa", "Με γλυκόλη το SG > 1 ανεβάζει το Kv"],
+    ["Authority βάνας ελέγχου", "β = ΔP_βάνας / (ΔP_βάνας + σωλήνας + τερματική μονάδα + σωλήνας επιστροφής)", "—", "Στόχος ≥ 0.5"],
     ["Καμπύλη δικτύου", "H(Q) = H_στατ + H_τριβών·(Q/Q_σχ)²", "mwc", ""],
     ["Υδραυλική ισχύς", "P = ρ·g·(Q/3600)·H", "W", "Ισχύς άξονα = P/η"]
   ];
@@ -424,5 +425,5 @@ window.DB = (function () {
     }
   };
 
-  return { EXAMPLE, PIPE_FAMILIES, FITTINGS, GLYCOL_GRID, GLYCOL, FLUIDS, KINDS, START_TYPES, NODE_TYPES, DEFAULTS, THEORY, VERSION: "2.5.1" };
+  return { EXAMPLE, PIPE_FAMILIES, FITTINGS, GLYCOL_GRID, GLYCOL, FLUIDS, KINDS, START_TYPES, NODE_TYPES, DEFAULTS, THEORY, VERSION: "2.6.0" };
 })();
