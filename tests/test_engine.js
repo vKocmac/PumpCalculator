@@ -532,8 +532,18 @@ console.log("\n[16] Πολλές αντλίες: διαχωριστής, αντ�
     pr.net.edges.find(e => e.id === "e12").route = { u: { y: 700 } };
     const rg = E.calcProject(), svg = E.schematicNet(rg, true, 900).svg, pn = E.normalize(E.getProject()).net;
     truthy("Θέση/διαδρομή/μέγεθος/φορά: ίδια H, χωρίς NaN, διαδρομή L9 στο y=700, όλα αποθηκεύονται",
-      rg.circuits.map(c => c.H).join(",") === h0 && !svg.includes("NaN") && svg.includes("V700 H") && svg.includes('width="200" height="80"')
+      rg.circuits.map(c => c.H).join(",") === h0 && !svg.includes("NaN") && /L-?[\d.]+ 700 L/.test(svg) && svg.includes('width="200" height="80"')
       && pn.nodes.find(n => n.id === "buf").size.w === 200 && pn.nodes.find(n => n.id === "p3").face === "left" && pn.edges.find(e => e.id === "e12").route.u.y === 700);
+  }
+  // Διαδρομή με ελεύθερα ενδιάμεσα σημεία: τα άκρα μένουν στα σημεία, όλα τα τμήματα οριζόντια/κατακόρυφα
+  {
+    const pr = E.getProject();
+    pr.net.edges.find(e => e.id === "e12").route = { u: { pts: [[1500, 460], [1500, 760], [1100, 760], [1100, 700]] } };
+    const svg = E.schematicNet(E.calcProject(), true, 900).svg;
+    const m = svg.match(/<g class="seg[^"]*"[^>]*data-id="e12"[\s\S]*?<path d="(M[^"]+)" class="ln/);
+    const pts = m ? m[1].replace(/^M/, "").split(" L").map(q => q.split(" ").map(Number)) : [];
+    const orth = pts.length > 2 && pts.every((q, i) => i === 0 || q[0] === pts[i - 1][0] || q[1] === pts[i - 1][1]);
+    truthy("Διαδρομή με ενδιάμεσα σημεία: ορθογώνια, περνά από (1500, 760) και (1100, 760)", orth && pts.some(q => q[0] === 1500 && q[1] === 760) && pts.some(q => q[0] === 1100 && q[1] === 760), JSON.stringify(pts));
   }
   // Μία αντλία: τίποτα δεν αλλάζει (ίδιο αποτέλεσμα με πριν) — καλύπτεται από [11] (300 τυχαία δίκτυα)
 }
