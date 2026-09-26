@@ -315,3 +315,58 @@ details.curve[open] > summary { margin-bottom: 10px; }
 .primary.alt { background: var(--accent-ink); }
 .primary.alt:hover { background: #083A63; }
 .actions .primary { grid-column: auto; }
+
+/* ---------- Δίκτυο: σημεία, σωλήνες, πλαίσιο στοιχείων ---------- */
+.hbtns { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.netstatus { display: flex; flex-wrap: wrap; gap: 6px 8px; margin: 2px 0 10px; }
+.netstatus .ns { font-size: 0.82rem; padding: 5px 10px; border-radius: 999px; background: var(--surface-2); color: var(--text-2); border: 1px solid var(--line); }
+.netstatus .ns.ok { background: var(--ok-soft); color: #1E6B3A; border-color: #BFE3CB; }
+.netstatus .ns.warn { background: var(--warn-soft); color: #6B4A00; border-color: var(--warn-line); }
+.netstatus .ns.bad { background: var(--err-soft); color: var(--err); border-color: #F4B8B2; font-weight: 600; }
+.schem-wrap { max-height: 70vh; overflow: auto; }
+.lg-dir { width: 0; height: 0; border-left: 9px solid #5E6E80; border-top: 5px solid transparent; border-bottom: 5px solid transparent; }
+.lg-box { width: 16px; height: 11px; border-radius: 3px; border: 2px solid var(--text); }
+.lg-box.err { border-color: var(--err); background: var(--err-soft); }
+.pop { width: 320px; }
+.pop-sub { font-size: 0.78rem; color: var(--muted); padding: 6px 8px 2px; }
+.pop-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 2px 4px 6px; }
+.pop-grid button { min-height: 34px; padding: 6px 8px; font-size: 0.82rem; font-weight: 500; border: 1px solid var(--line); border-radius: 8px; background: #FFFFFF; text-align: left; flex-direction: row; }
+.pop-grid button:hover { border-color: var(--accent); background: var(--accent-tint); }
+.pop-conn { display: flex; gap: 6px; padding: 2px 4px 6px; }
+.pop-conn select { min-height: 36px; padding: 4px 30px 4px 8px; font-size: 0.86rem; }
+.pop-conn button { width: auto; min-height: 36px; flex-direction: row; padding: 0 12px; color: #FFFFFF; }
+.pop-conn button:hover { background: var(--accent-ink); }
+@media (min-width: 820px) {
+  .g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .g-a-net2 { grid-template-columns: 90px minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr); }
+}
+.drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(520px, 100vw); z-index: 60; background: var(--bg);
+  border-left: 1px solid var(--line); box-shadow: -12px 0 32px rgba(19, 32, 51, 0.18); display: flex; flex-direction: column;
+}
+.drawer[hidden] { display: none; }
+.dr-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; background: var(--surface); border-bottom: 1px solid var(--line); font-size: 0.78rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted-2); }
+.dr-b { flex: 1; overflow: auto; padding: 12px; }
+.dr-b .card, .dr-b .dr-sec { margin: 0; }
+.dr-sec { background: var(--accent-tint); border: 2px solid var(--accent); border-radius: var(--radius); padding: 0 14px 14px; }
+.dr-sec .br-h { margin: 0 -14px 12px; padding: 10px 14px; }
+.dr-b .br-card { padding: 0 14px 14px; }
+.dr-b .br-card .br-h { margin: 0 -14px 12px; padding: 10px 14px; }
+.dr-b .grid.g3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dr-b .g-a-net2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dr-b .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dr-b .table.fit { min-width: 560px; }
+.dr-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: space-between; margin-top: 4px; }
+.conn2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 0.84rem; }
+.conn2 h4 { margin: 0 0 4px; font-size: 0.74rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted-2); }
+.conn2 ul { margin: 0; padding-left: 16px; }
+.conn2 p { margin: 6px 0 0; font-weight: 600; }
+/* Μεγέθυνση σχεδίου */
+body.net-full { overflow: hidden; }
+body.net-full #c-net { position: fixed; inset: 10px; z-index: 50; overflow: auto; box-shadow: var(--shadow-lg); }
+body.net-full #c-net .schem-wrap { max-height: none; height: calc(100vh - 250px); }
+body.net-full.drawer-open #c-net { right: min(530px, 100vw); }
+@media (max-width: 700px) {
+  .drawer { top: auto; height: 86vh; width: 100vw; border-left: 0; border-top: 1px solid var(--line); border-radius: 16px 16px 0 0; }
+  body.net-full.drawer-open #c-net { right: 10px; }
+}
