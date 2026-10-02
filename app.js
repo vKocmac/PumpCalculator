@@ -1679,9 +1679,10 @@
     const net = project.mode === "network";
     const edge = net && selId && project.net.edges.find(e => e.id === selId);
     const node = net && selNode && project.net.nodes.find(n => n.id === selNode);
-    if (!edge && !node) { dr.hidden = true; dr.innerHTML = ""; document.body.classList.remove("drawer-open"); return; }
+    if (!edge && !node) { dr.hidden = true; dr.innerHTML = ""; delete dr.dataset.key; document.body.classList.remove("drawer-open"); return; }
     dr.innerHTML = `<div class="dr-h"><span>${edge ? "Σωλήνας" : "Εξοπλισμός / σημείο"}</span><button class="icon" data-act="close-drawer" aria-label="Κλείσιμο">✕</button></div>
       <div class="dr-b">${edge ? renderBranchCard(res) : nodeEditorHtml(res)}</div>`;
+    dr.dataset.key = edge ? "e:" + edge.id : "n:" + node.id;   // ποιο στοιχείο δείχνει (για το scroll στο render)
     dr.hidden = false;
     document.body.classList.add("drawer-open");
   }
@@ -2183,9 +2184,14 @@
       if (selNode && !res.ncById.has(selNode)) selNode = null;
     } else if (!selId && res.tree.order.length) selId = res.tree.order[0];
     document.body.classList.toggle("net-full", netFull && res.mode === "network");
+    const dr = $("#drawer"), ob = dr && dr.querySelector(".dr-b"), wasKey = dr && dr.dataset.key, top = ob ? ob.scrollTop : 0;
     renderMain(res);
     renderDrawer(res);
     renderOutputs(res, validate(res));
+    /* Ίδιο στοιχείο στο πλαίσιο → κρατά τη θέση του (π.χ. «+ Εξάρτημα» στο Δ δεν το γυρνά στο Α).
+       Μετά τις εξόδους: πριν γεμίσουν, το περιεχόμενο είναι κοντύτερο και το scroll θα κοβόταν. */
+    const nb = dr && dr.querySelector(".dr-b");
+    if (nb && top && dr.dataset.key === wasKey) nb.scrollTop = top;
     save();
   }
   function liveRecalc() {
