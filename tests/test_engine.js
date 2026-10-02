@@ -559,6 +559,50 @@ truthy(`?v= στα 3 αρχεία = ${ver}`, qs.length === 3 && qs.every(v => v 
 const pj = E.parseProjectText(JSON.stringify({ meta: { name: "x" }, branches: [] }));
 truthy("Άνοιγμα αρχείου: δέχεται JSON", pj.meta.name === "x");
 
+/* =========================== 17. Νερό > 80 °C, αρνητική ΔP, τεμάχια (2.8.3) =========================== */
+console.log("\n[17] Νερό > 80 °C (NIST), αρνητική ΔP, ακέραια τεμάχια");
+{
+  // Τιμές NIST WebBook (IAPWS-95), 10 bar, ν = μ/ρ ×1e-6 — ο παλιός τύπος έδινε +7.6% / +22% / +34%
+  [[90, 0.3256], [100, 0.2939], [120, 0.2462], [130, 0.2279], [150, 0.1992]].forEach(([T, nu]) =>
+    truthy(`ν νερού ${T}°C εντός 0.5% του NIST (${(100 * (E.nuWater(T) / (nu * 1e-6) - 1)).toFixed(2)}%)`, Math.abs(E.nuWater(T) / (nu * 1e-6) - 1) < 0.005));
+  close("ν νερού: συνέχεια στους 80 °C", E.nuWater(80 + 1e-9), E.nuWater(80), 1e-6);
+  let mono = true; for (let T = 1; T <= 150; T++) if (!(E.nuWater(T) < E.nuWater(T - 1))) mono = false;
+  truthy("ν νερού φθίνει παντού 0…150 °C (ο τύπος ανέβαινε μετά τους ~117 °C)", mono);
+  setF("water", 0, 90); const f90 = E.fluidProps(); setF("water", 0, 90.001); const f90b = E.fluidProps();
+  close("νερό: ρ χωρίς σκαλοπάτι στους 90 °C", f90b.rho, f90.rho, 1e-5);
+  close("νερό: cp χωρίς σκαλοπάτι στους 90 °C", f90b.cp, f90.cp, 1e-5);
+  setF("water", 0, 120); const f120 = E.fluidProps();
+  close("νερό 120 °C: ρ από NIST (πριν: 965.4, κολλημένο στους 90)", f120.rho, 943.5, 1e-9);
+  close("νερό 120 °C: cp από NIST", f120.cp, 4.242, 1e-9);
+  truthy("νερό 120 °C: χωρίς προειδοποίηση «εκτός πίνακα»", !f120.clamped);
+  setF("water", 0, 160);
+  truthy("νερό 160 °C: εκτός πίνακα → προειδοποίηση", E.fluidProps().clamped);
+  setF("water", 0, 45);
+  close("νερό 45 °C: αμετάβλητο (τύπος)", E.fluidProps().nu, 5.972631353300369e-7, 1e-12);
+
+  const errsOf = p => { E.setProject(E.normalize(p)); return E.validate(E.calcProject()).errors; };
+  const simple = (o = {}) => ({ meta: {}, fluid: "water", waterTemp: 45, marginPct: 0, extras: [], branches: [B("A", null, "t", 2, "Φ32", 10, o)] });
+  truthy("Εξοπλισμός κλάδου ΔP −50 kPa → σφάλμα (πριν: αφαιρούσε από το H)", errsOf(simple({ equip: [{ label: "x", dP: -50, unit: "kPa" }] })).some(e => e.includes("αρνητική ΔP")));
+  truthy("Εξοπλισμός κλάδου ΔP 0 → δεκτό", !errsOf(simple({ equip: [{ label: "x", dP: 0, unit: "kPa" }] })).length);
+  truthy("Κοινός εξοπλισμός ΔP −10 → σφάλμα", errsOf({ ...simple(), extras: [{ label: "Ψ", dP: -10, unit: "kPa" }] }).some(e => e.includes("αρνητική ΔP")));
+  truthy("Αρχή βρόχου ΔP −5 → σφάλμα", errsOf({ ...simple(), start: { type: "Αντλία", label: "", dP: -5, unit: "kPa" } }).some(e => e.includes("αρνητική ΔP")));
+  const netN = dP => ({ mode: "network", meta: {}, fluid: "water", waterTemp: 45, marginPct: 0, extras: [], branches: [],
+    net: { nodes: [Nd("P", "pump"), Nd("T1", "fcu", { Q: 1, dP })], edges: [Pp("a", "P", "T1", "Φ25", 3), Pp("b", "T1", "P", "Φ25", 3)] } });
+  truthy("Δίκτυο: εξοπλισμός ΔP −20 → σφάλμα", errsOf(netN(-20)).some(e => e.includes("αρνητική ΔP")));
+  truthy("Δίκτυο: εξοπλισμός ΔP 20 → χωρίς σφάλμα", !errsOf(netN(20)).length);
+  // Το προσωρινό H δεν πρέπει να «κερδίζει» από την αρνητική τιμή: αγνοείται (όπως στους κόμβους)
+  E.setProject(E.normalize(netN(""))); const H0 = E.calcProject().H;
+  const netE = eq => { const p = netN(""); p.net.edges[1].equip = [{ label: "x", dP: eq, unit: "kPa" }]; E.setProject(E.normalize(p)); return E.calcProject(); };
+  const rNeg = netE(-10);
+  close("Εξοπλισμός σωλήνα −10 kPa → προσωρινό H = H χωρίς αυτόν (δεν αφαιρείται)", rNeg.H, H0, 1e-12);
+  truthy("… και το H σημαίνεται προσωρινό", !!rNeg.provisional);
+  E.setProject(E.normalize({ ...simple(), extras: [{ label: "Ψ", dP: -10, unit: "kPa" }] })); const rx = E.calcProject();
+  E.setProject(E.normalize(simple())); close("Απλή: κοινός εξοπλισμός −10 → δεν αφαιρείται από το H", rx.H, E.calcProject().H, 1e-12);
+  const fit = qty => simple({ fittings: [{ type: "Γωνία 90°", size: "", qty, zeta: 1.2, kv: "" }] });
+  truthy("Εξάρτημα 1.5 τεμάχια → σφάλμα", errsOf(fit(1.5)).some(e => e.includes("ακέραιος")));
+  truthy("Εξάρτημα 2 τεμάχια → δεκτό", !errsOf(fit(2)).length);
+}
+
 /* =========================== Σύνοψη =========================== */
 console.log(`\n========== ${pass} passed, ${fail} failed ==========`);
 process.exit(fail ? 1 : 0);

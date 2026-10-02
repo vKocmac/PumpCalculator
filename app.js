@@ -136,7 +136,15 @@
   }
 
   /* ---------------- ENGINE: ρευστό ---------------- */
-  function nuWater(T) { return 1e-6 * Math.exp(0.5842 - 0.030263 * T + 0.0001295 * T * T); }
+  /* ν νερού: τύπος ως 80 °C (±3% έναντι NIST)· πάνω από 80 °C πίνακας DB.WATER_HOT — ο τύπος είναι
+     παραβολή με ελάχιστο στους ~117 °C και έδινε ν που ΑΝΕΒΑΙΝΕΙ με τη θερμοκρασία (+34% στους 130 °C).
+     Ο συντελεστής κρατά τη συνέχεια στους 80 °C (τύπος/NIST = 1.0016). Πάνω από 150 °C: όριο πίνακα. */
+  const nuFormula = T => 1e-6 * Math.exp(0.5842 - 0.030263 * T + 0.0001295 * T * T);
+  function nuWater(T) {
+    const W = DB.WATER_HOT, T0 = W[0][0];
+    if (!(T > T0)) return nuFormula(T);
+    return 1e-6 * interp(W, T, 1) * nuFormula(T0) / (1e-6 * W[0][1]);
+  }
   function interp(table, x, col) { // table rows [x, ...]
     if (x <= table[0][0]) return table[0][col];
     for (let i = 1; i < table.length; i++) {
@@ -182,7 +190,10 @@
     const tFreeze = interp(DB.GLYCOL_GRID.C.map((cc, i) => [cc, tab.tFreeze[i]]), c, 1);
     const frozen = !(T > tFreeze) && !(c === 0 && T >= 0);
     const r = f.hasConc ? lookup2(tab.ratio, T, c) : { v: 1, approx: false, clamped: false };
-    const rho = lookup2(tab.rho, T, c), cp = lookup2(tab.cp, T, c);
+    // Νερό πάνω από 90 °C (τέλος του GLYCOL_GRID): ρ, cp από DB.WATER_HOT, όριο 150 °C
+    const W = DB.WATER_HOT, hot = !f.hasConc && T > DB.GLYCOL_GRID.T[DB.GLYCOL_GRID.T.length - 1];
+    const rho = hot ? { v: interp(W, T, 2), approx: false, clamped: T > W[W.length - 1][0] } : lookup2(tab.rho, T, c);
+    const cp = hot ? { v: interp(W, T, 3) } : lookup2(tab.cp, T, c);
     const nu = nuWater(T) * r.v;
     const label = f.label + (f.hasConc ? " " + c + "%" : "");
     return {
@@ -269,7 +280,7 @@
       return r;
     });
     let sumEquip = 0;
-    const equip = (br.equip || []).map(e => { const m = toM(e.dP, e.unit, fp); if (isFinite(m)) sumEquip += m; return m; });
+    const equip = (br.equip || []).map(e => { const m = toM(e.dP, e.unit, fp); if (isFinite(m) && m > 0) sumEquip += m; return m; });   // αρνητική → σφάλμα, δεν αφαιρείται
     const pipeDP = isFinite(pipe.dP) ? pipe.dP : 0;
     const dP = pipeDP + sumFit + sumEquip;
     // Authority βάνας ελέγχου: ΔP βάνας / ΔP όλου του κλάδου όπου βρίσκεται
@@ -316,11 +327,15 @@
       const hasZ = isFinite(num(f.zeta)) && num(f.zeta) > 0;
       const hasK = isFinite(num(f.kv)) && num(f.kv) > 0;
       if (!(num(f.qty) > 0)) { errors.push(`${nm} · εξάρτ. #${i + 1} (${f.type || "?"}): λείπουν τεμάχια.`); mf = true; }
+      else if (!Number.isInteger(num(f.qty))) { errors.push(`${nm} · εξάρτ. #${i + 1} (${f.type || "?"}): τα τεμάχια είναι ακέραιος αριθμός.`); mf = true; }
       if (!hasZ && !hasK) { errors.push(`${nm} · εξάρτ. #${i + 1} (${f.type || "?"}): δώσε ζ ή Kv.`); mf = true; }
     });
     if (mf) missing.push("εξαρτήματα");
     let me = false;
-    (br.equip || []).forEach((e, i) => { if (!isFinite(num(e.dP))) { errors.push(`${nm} · εξοπλισμός #${i + 1}: λείπει η ΔP.`); me = true; } });
+    (br.equip || []).forEach((e, i) => {
+      if (!isFinite(num(e.dP))) { errors.push(`${nm} · εξοπλισμός #${i + 1}: λείπει η ΔP.`); me = true; }
+      else if (num(e.dP) < 0) { errors.push(`${nm} · εξοπλισμός #${i + 1}: αρνητική ΔP — η απώλεια δίνεται θετική.`); me = true; }
+    });
     if (me) missing.push("ΔP εξοπλ.");
     return { errors, missing };
   }
@@ -435,8 +450,8 @@
       c.kvReq = c.excess > 1e-6 && q > 0 ? q * Math.sqrt((fp.rho / 1000) / (c.excessKPa / 100)) : NaN;   // Kv = Q·√(SG/ΔP[bar])
     });
     const startM = toM(project.start.dP, project.start.unit, fp);
-    let sumExtras = isFinite(startM) ? startM : 0;
-    project.extras.forEach(e => { const d = toM(e.dP, e.unit, fp); if (isFinite(d)) sumExtras += d; });
+    let sumExtras = isFinite(startM) && startM > 0 ? startM : 0;   // αρνητική → σφάλμα, δεν αφαιρείται
+    project.extras.forEach(e => { const d = toM(e.dP, e.unit, fp); if (isFinite(d) && d > 0) sumExtras += d; });
     const base = pathMax + sumExtras;
     const margin = (num(project.marginPct) || 0) / 100;
     const Hfric = base * (1 + margin);
@@ -454,7 +469,7 @@
     const incomplete = branches.filter(x => !x.c.complete).map(x => x.br.id);
     const provisional = !branches.length || incomplete.length > 0 || fp.frozen || tree.cyclic.length > 0;
     return {
-      fp, branches, cById, tree, circuits, worst, sumBranches: pathMax, startM: isFinite(startM) ? startM : 0,
+      fp, branches, cById, tree, circuits, worst, sumBranches: pathMax, startM: isFinite(startM) && startM > 0 ? startM : 0,
       sumExtras, base, Hfric, Hstatic, H, margin, Qd, Ph, pump: { fit, op, Kq, eta }, incomplete, provisional
     };
   }
@@ -464,7 +479,7 @@
     const fp = res.fp;
     if (fp.frozen) errors.push(`Ρευστό: ${fmt(fp.T, 0)} °C είναι κάτω από το σημείο πήξης (${fmt(fp.tFreeze, 1)} °C).`);
     else if (fp.approx) warns.push(`Ρευστό: κοντά στο σημείο πήξης (${fmt(fp.tFreeze, 1)} °C) — ιδιότητες κατά προσέγγιση.`);
-    if (fp.clamped) warns.push("Ρευστό: θερμοκρασία ή συγκέντρωση εκτός πίνακα (−30…90 °C, 0…60%) — χρησιμοποιήθηκε το όριο.");
+    if (fp.clamped) warns.push("Ρευστό: θερμοκρασία ή συγκέντρωση εκτός πίνακα (νερό ως 150 °C · γλυκόλη −30…90 °C, 0…60%) — χρησιμοποιήθηκε το όριο.");
     if (res.mode === "network") {
       if (!project.net.edges.length) errors.push("Το δίκτυο είναι άδειο — ξεκίνα από το + της αντλίας.");
       validateNetwork(res, errors, warns);
@@ -478,7 +493,11 @@
     Object.keys(codes).forEach(k => { if (codes[k] > 1) warns.push(`Ο κωδικός ${k} χρησιμοποιείται ${codes[k]} φορές.`); });
     res.branches.forEach(({ br, c }) => { errors.push(...c.errors); warns.push(...branchWarns(br, c, res)); });
     if (String(project.start.dP).trim() !== "" && !isFinite(num(project.start.dP))) errors.push("Αρχή βρόχου: μη έγκυρη ΔP.");
-    project.extras.forEach((e, i) => { if (!isFinite(num(e.dP))) errors.push(`Κοινός εξοπλισμός #${i + 1} (${e.label || "χωρίς περιγραφή"}): λείπει η ΔP.`); });
+    else if (num(project.start.dP) < 0) errors.push("Αρχή βρόχου: αρνητική ΔP — η απώλεια δίνεται θετική.");
+    project.extras.forEach((e, i) => {
+      if (!isFinite(num(e.dP))) errors.push(`Κοινός εξοπλισμός #${i + 1} (${e.label || "χωρίς περιγραφή"}): λείπει η ΔP.`);
+      else if (num(e.dP) < 0) errors.push(`Κοινός εξοπλισμός #${i + 1} (${e.label || "χωρίς περιγραφή"}): αρνητική ΔP — η απώλεια δίνεται θετική.`);
+    });
     pumpWarns(res, warns);
     return { errors, warns };
   }
@@ -746,7 +765,7 @@
     const nodes = sub.nodes.map(n => {
       const t = nodeType(n.type), s = nst.get(n.id);
       let m = 0;
-      if (t.dp && String(n.dP == null ? "" : n.dP).trim() !== "") { m = toM(n.dP, n.unit, fp); if (!isFinite(m)) { s.errs.push(`${nodeLabel(n)}: μη έγκυρη ΔP.`); m = 0; } }
+      if (t.dp && String(n.dP == null ? "" : n.dP).trim() !== "") { m = toM(n.dP, n.unit, fp); if (!isFinite(m)) { s.errs.push(`${nodeLabel(n)}: μη έγκυρη ΔP.`); m = 0; } else if (m < 0) { s.errs.push(`${nodeLabel(n)}: αρνητική ΔP — η απώλεια δίνεται θετική.`); m = 0; } }
       const ins = g.inE.get(n.id), outs = g.outE.get(n.id), T = fl.through.get(n.id);
       const qv = id => fl.q.get(id), ok = id => isFinite(qv(id));
       const sIn = ins.length && ins.every(ok) ? ins.reduce((a, id) => a + qv(id), 0) : NaN;
