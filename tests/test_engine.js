@@ -603,6 +603,60 @@ console.log("\n[17] Νερό > 80 °C (NIST), αρνητική ΔP, ακέραι
   truthy("Εξάρτημα 2 τεμάχια → δεκτό", !errsOf(fit(2)).length);
 }
 
+/* =========================== 18. Κόμβος / ταφ = τελεία (2.8.4) =========================== */
+console.log("\n[18] Κόμβος / ταφ σχεδιάζεται ως τελεία, οι σωλήνες καταλήγουν στο κέντρο του");
+{
+  // Ταφ προσαγωγής J → 3 FCU σε διαφορετικές γραμμές, ταφ επιστροφής R (πριν: δύο μπάρες)
+  const nodes = [Nd("P", "pump"), Nd("J", "junction"), Nd("R", "junction"),
+    Nd("T1", "fcu", { Q: 1, dP: 20 }), Nd("T2", "fcu", { Q: 1, dP: 20 }), Nd("T3", "fcu", { Q: 1, dP: 20 })];
+  const edges = [Pp("a", "P", "J", "Φ40", 5), Pp("t1", "J", "T1", "Φ25", 3), Pp("t2", "J", "T2", "Φ25", 3), Pp("t3", "J", "T3", "Φ25", 3),
+    Pp("u1", "T1", "R", "Φ25", 3), Pp("u2", "T2", "R", "Φ25", 3), Pp("u3", "T3", "R", "Φ25", 3), Pp("b", "R", "P", "Φ40", 5)];
+  const H0 = (() => { E.setProject(E.normalize({ mode: "network", meta: {}, fluid: "water", waterTemp: 45, marginPct: 0, extras: [], branches: [], net: { nodes, edges } })); return E.calcProject().H; })();
+  ["u", "line"].forEach(mode => {
+    E.setProject(E.normalize({ mode: "network", draw: mode, meta: {}, fluid: "water", waterTemp: 45, marginPct: 0, extras: [], branches: [], net: { nodes, edges } }));
+    const r = E.calcProject(), svg = E.schematicNet(r, true, 900).svg, G = E.geometry();
+    truthy(`[${mode}] χωρίς μπάρα κόμβου (rect .njun)`, !/<rect[^>]*class="njun/.test(svg));
+    truthy(`[${mode}] 2 τελείες κόμβου`, (svg.match(/<circle[^>]*class="njun/g) || []).length === 2);
+    const bad = [];
+    E.getProject().net.edges.forEach(e => {
+      const P = G.edges.get(e.id).pts, ends = [[e.from, P[0]], [e.to, P[P.length - 1]]];
+      ends.forEach(([id, p]) => { if (id !== "J" && id !== "R") return; const n = G.nodes.get(id); if (Math.abs(p.x - n.x) > 5 || Math.abs(p.y - n.y) > 1) bad.push(`${e.id}→${id} (${p.x},${p.y}) ≠ (${n.x},${n.y})`); });
+      const orth = P.every((q, i) => i === 0 || q.x === P[i - 1].x || q.y === P[i - 1].y);
+      if (!orth) bad.push(`${e.id} όχι ορθογώνιος`);
+    });
+    truthy(`[${mode}] κάθε σωλήνας κόμβου ξεκινά/καταλήγει στην τελεία, ορθογώνια`, !bad.length, bad.join("; "));
+    close(`[${mode}] ίδιο H (μόνο το σχέδιο άλλαξε)`, r.H, H0, 1e-12);
+  });
+  const load18 = (o = {}) => { const p = { mode: "network", meta: {}, fluid: "water", waterTemp: 45, marginPct: 0, extras: [], branches: [], net: { nodes: JSON.parse(JSON.stringify(nodes)), edges: JSON.parse(JSON.stringify(edges)) }, ...o }; (o.mut || (() => { }))(p.net); delete p.mut; E.setProject(E.normalize(p)); const r = E.calcProject(); return { r, svg: E.schematicNet(r, true, 900).svg, G: E.geometry() }; };
+  // Ελεγκτής: ελλιπής κάτω κλάδος δεν βάφει όλο τον ορθοστάτη — ο κοντινότερος κλάδος σχεδιάζεται τελευταίος (από πάνω)
+  { const { svg } = load18({ mut: net => { net.edges.find(e => e.id === "t3").length = ""; } });
+    const at = id => svg.indexOf(`data-id="${id}"`);
+    truthy("Ορθοστάτης: κλάδοι από τον μακρύτερο στον κοντινότερο (t3 → t2 → t1), ο ελλιπής t3 μόνο στο δικό του κομμάτι", at("t3") < at("t2") && at("t2") < at("t1")); }
+  // Ελεγκτής: by-pass επιστροφής R → J (από κάτω) καταλήγει στην τελεία, όχι πάνω στον ορθοστάτη
+  { const { G } = load18({ mut: net => net.edges.push(Pp("mx", "R", "J", "Φ25", 3)) });
+    const P = G.edges.get("mx").pts, J = G.nodes.get("J"), pn = P[P.length - 1];
+    const onRiser = P.some((q, i) => i > 0 && q.x === J.x && P[i - 1].x === J.x && Math.max(q.y, P[i - 1].y) > J.y + 9);
+    truthy("By-pass R → J: τελειώνει στην τελεία, χωρίς να τρέχει πάνω στον ορθοστάτη", Math.abs(pn.x - J.x) <= 1 && Math.abs(pn.y - J.y) <= 1 && !onRiser, JSON.stringify(P)); }
+  // Ελεγκτής: διαδρομή που σύρθηκε στην 2.8.3 (σημεία στη γραμμή του κλάδου) δεν τρέχει πια πάνω στον t1
+  { const { G } = load18({ mut: net => { net.edges.find(e => e.id === "t3").route = { u: { pts: [[420, 272], [420, 300], [640, 300]] } }; } });
+    const P = G.edges.get("t3").pts, J = G.nodes.get("J");
+    truthy("Παλιά διαδρομή t3: κανένα οριζόντιο τμήμα στη γραμμή της τελείας (πάνω στον t1)", !P.some((q, i) => i > 0 && q.y === J.y && P[i - 1].y === J.y), JSON.stringify(P)); }
+  // Ελεγκτής: όνομα κόμβου δίπλα στην τελεία, όχι πάνω στον ορθοστάτη · γεωμετρία ορθοστάτη για το «μην αφήσεις εδώ»
+  { const { svg, G } = load18({ mut: net => { net.nodes.find(n => n.id === "J").label = "Ταφ Α"; } });
+    const J = G.nodes.get("J"), m = /<text x="([\d.]+)" y="([\d.]+)"[^>]*>Ταφ Α</.exec(svg);
+    truthy("Όνομα κόμβου δεξιά-πάνω από την τελεία (όχι στον ορθοστάτη)", m && +m[1] > J.x && +m[2] < J.y, m ? m[0] : "χωρίς ετικέτα");
+    truthy("Γεωμετρία κόμβου: ορθοστάτης 64 → 272 για τον έλεγχο απόθεσης", J.riser && J.riser[0] === J.y && J.riser[1] === G.nodes.get("T3").y, JSON.stringify(J)); }
+  // Φύλλο σχεδίου: χώρος για σύρσιμο δεξιά/κάτω (διαδραστικό) · γεμίζει το παράθυρο · η αναφορά μένει σφιχτή
+  { const { r } = load18(), si = E.schematicNet(r, true, 900), sr = E.schematicNet(r, false, 680), sf = E.schematicNet(r, true, 900, 4000, 2500);
+    const GN = [...E.geometry().nodes.values()], right = Math.max(...GN.map(o => o.x + o.hw));
+    truthy("Φύλλο: διαδραστικό με ελεύθερη στήλη δεξιά από το τελευταίο σημείο και 2 γραμμές κάτω", si.W - right >= 290 && si.H >= si.cH + 208, `${si.W}×${si.H} · δεξιότερο σημείο ${right} · περιεχόμενο ύψος ${si.cH}`);
+    truthy("Φύλλο: γεμίζει όσο του ζητηθεί (μεγέθυνση: όλο το παράθυρο)", sf.W === 4000 && sf.H === 2500 && sf.svg.includes('viewBox="0 0 4000 2500"'));
+    truthy("Αναφορά: χωρίς άδειο χώρο (σφιχτό φύλλο)", sr.W === sr.cW && sr.H === sr.cH, `${sr.W}×${sr.H}`); }
+  // Χαλασμένη θέση / διαδρομή (NaN) σε αποθηκευμένο έργο → αυτόματη θέση, όχι εξαφάνιση
+  { const { svg } = load18({ mut: net => { net.nodes.find(n => n.id === "T2").grid = { u: { x: NaN, y: NaN } }; net.edges.find(e => e.id === "t3").route = { u: { pts: [[NaN, 5], [4, null]] } }; } });
+    truthy("Θέση NaN / διαδρομή NaN αγνοούνται — σχέδιο χωρίς NaN", !svg.includes("NaN")); }
+}
+
 /* =========================== Σύνοψη =========================== */
 console.log(`\n========== ${pass} passed, ${fail} failed ==========`);
 process.exit(fail ? 1 : 0);
