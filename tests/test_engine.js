@@ -720,6 +720,36 @@ console.log("\n[20] Μετακίνηση ομάδας: σημεία + σωλήν
   truthy("Μετά τη μετακίνηση: σχέδιο χωρίς NaN, ίδιο H", !svg.includes("NaN") && E.calcProject().H === H0);
 }
 
+/* =========================== 21. Μαζική αλλαγή σωλήνων (2.8.7) =========================== */
+console.log("\n[21] Μαζική αλλαγή: υλικό με αντιστοίχιση διατομής, διατομή, μήκος, εξαρτήματα");
+{
+  const steel = "Σιδηροσωλήνας (μαύρος)", cu = "Χαλκός";
+  truthy("Διατομή: PPR Φ32 (26.2) → σίδερο DN25 (27.2) — ποτέ στενότερη", E.mapSize("PPR SDR11", "Φ32", steel) === "DN25");
+  truthy("Διατομή: PPR Φ25 (20.5) → σίδερο DN20 (21.6)", E.mapSize("PPR SDR11", "Φ25", steel) === "DN20");
+  truthy("Διατομή: χαλκός 22×1 (20) → σίδερο DN20 (21.6)", E.mapSize(cu, "22×1", steel) === "DN20");
+  truthy("Διατομή: ίδιο όνομα σε άλλο PPR → μένει (Φ40)", E.mapSize("PPR SDR11", "Φ40", "PPR SDR9") === "Φ40");
+  const nodes = [Nd("P", "pump"), Nd("J", "junction"), Nd("R", "junction"), Nd("T1", "fcu", { Q: 1, dP: 20 }), Nd("T2", "fcu", { Q: 1, dP: 20 })];
+  const edges = [Pp("a", "P", "J", "Φ40", 5), Pp("t1", "J", "T1", "Φ25", 3), Pp("t2", "J", "T2", "Φ32", 3, { fittings: [{ type: "x", size: "Φ25", qty: 1, zeta: 1, kv: "" }] }),
+    Pp("u1", "T1", "R", "Φ25", 3), Pp("u2", "T2", "R", "Φ25", 3), Pp("b", "R", "P", "Φ40", 5), { ...Pp("d", "P", "P", "Φ40", 0), direct: true }];
+  E.setProject(E.normalize({ mode: "network", meta: {}, fluid: "water", waterTemp: 45, marginPct: 0, extras: [], branches: [], net: { nodes, edges: edges.filter(e => e.id !== "d") } }));
+  const pr = E.getProject(), ed = id => pr.net.edges.find(e => e.id === id), H0 = E.calcProject().H;
+  const r = E.bulkPipes(["t1", "t2"], { fam: steel, size: "", kind: "" });
+  truthy("Υλικό → σίδερο σε t1, t2: διατομές αντιστοιχίστηκαν (Φ25→DN20, Φ32→DN25)", ed("t1").pipeFamily === steel && ed("t1").pipeSize === "DN20" && ed("t2").pipeSize === "DN25" && r.n === 2, JSON.stringify(r));
+  truthy("… η αναφορά γράφει κάθε αλλαγή διατομής (παλιό→νέο)", r.sizes.length === 2 && r.sizes.some(x => x.includes("Φ32→DN25")), JSON.stringify(r.sizes));
+  truthy("… εξάρτημα με δική του διατομή γυρνά σε «= σωλήνα» (η παλιά δεν υπάρχει στο νέο υλικό)", ed("t2").fittings[0].size === "");
+  truthy("… οι μη επιλεγμένοι δεν άλλαξαν", ed("u1").pipeFamily === "PPR SDR11" && ed("a").pipeSize === "Φ40");
+  truthy("… το H άλλαξε (άλλο υλικό, άλλη τραχύτητα/διάμετρος) και είναι πεπερασμένο", isFinite(E.calcProject().H) && E.calcProject().H !== H0);
+  E.bulkPipes(["t1", "t2"], { fam: "", size: "DN32", kind: "pe" });
+  truthy("Διατομή DN32 + μήκος ×2 σε δύο σωλήνες ίδιου υλικού", ["t1", "t2"].every(id => ed(id).pipeSize === "DN32" && ed(id).kind === "pe"));
+  E.bulkPipes(["t1", "u1"], { fam: "", size: "DN50", kind: "" });
+  truthy("Διατομή που δεν υπάρχει στο υλικό ενός σωλήνα → εκείνος μένει (u1 PPR δεν γίνεται «DN50»)", ed("t1").pipeSize === "DN50" && ed("u1").pipeSize === "Φ25");
+  const k = E.bulkFittings(["u1", "u2", "b"], "add", "Γωνία 90° (τυπική)", 3);
+  truthy("Εξάρτημα «Γωνία 90°» ×3 σε 3 σωλήνες μαζί", k === 3 && ["u1", "u2", "b"].every(id => ed(id).fittings.some(f => f.type === "Γωνία 90° (τυπική)" && f.qty === 3)));
+  const kd = E.bulkFittings(["u1", "u2"], "del", "Γωνία 90° (τυπική)");
+  truthy("Αφαίρεση αυτού του είδους από 2 σωλήνες — ο τρίτος το κρατά", kd === 2 && !ed("u1").fittings.length && ed("b").fittings.length === 1);
+  truthy("Μετά τις μαζικές αλλαγές: χωρίς σφάλματα, σχέδιο χωρίς NaN", !E.validate(E.calcProject()).errors.length && !E.schematicNet(E.calcProject(), true, 900).svg.includes("NaN"));
+}
+
 /* =========================== Σύνοψη =========================== */
 console.log(`\n========== ${pass} passed, ${fail} failed ==========`);
 process.exit(fail ? 1 : 0);

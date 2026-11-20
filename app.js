@@ -27,6 +27,8 @@
   let pop = null;            // ανοιχτό μενού «+» στο σχηματικό: { id, x, y }
   let curveOpen = false;
   let multiSel = new Set();  // πολλαπλή επιλογή σημείων (παράθυρο · Shift/Ctrl+κλικ · Ctrl+A)
+  let multiSelE = new Set(); // πολλαπλή επιλογή σωλήνων → μαζική αλλαγή στο πλαίσιο δεξιά
+  let bulk = { fam: "", size: "", kind: "", fit: "", qty: 1 };   // επιλογές του πλαισίου μαζικής αλλαγής
   let selNode = null;        // επιλεγμένο σημείο στο δίκτυο
   let netFull = false;       // μεγέθυνση του σχεδίου
   let netZoom = 1, zoomFit = false;   // zoom σχεδίου (fit = χωράει ολόκληρο)
@@ -257,6 +259,41 @@
     if (useKv) per = Math.pow(Q / kv, 2) * D.barToMWS;
     else per = (isFinite(zeta) ? zeta : 0) * (v * v) / (2 * D.g);
     return { method: useKv ? "Kv" : "ζ", per, total: per * qty, qty };
+  }
+  /* Αλλαγή υλικού: ίδιο όνομα διατομής αν υπάρχει στο νέο υλικό· αλλιώς η μικρότερη με εσωτερική διάμετρο ≥ της παλιάς
+     (ποτέ στενότερος σωλήνας χωρίς να φαίνεται) — π.χ. PPR Φ32 (26.2) → σίδερο DN25 (27.2). */
+  function mapSize(oldFam, oldSize, newFam) {
+    const fo = DB.PIPE_FAMILIES.find(f => f.family === oldFam), fn = DB.PIPE_FAMILIES.find(f => f.family === newFam);
+    if (!fn) return oldSize;
+    if (fn.sizes.some(x => x[0] === oldSize)) return oldSize;
+    const r = fo && fo.sizes.find(x => x[0] === oldSize), di = r ? r[3] : 0;
+    return (fn.sizes.find(x => x[3] >= di - 0.5) || fn.sizes[fn.sizes.length - 1])[0];
+  }
+  // Μαζική αλλαγή σωλήνων: { fam, size, kind } — ό,τι είναι κενό μένει όπως είναι. Επιστρέφει τι άλλαξε (για αναφορά).
+  function bulkPipes(ids, o) {
+    const S = new Set(ids), out = { n: 0, sizes: [] };
+    project.net.edges.forEach(e => {
+      if (!S.has(e.id) || e.direct) return;
+      out.n++;
+      if (o.fam && o.fam !== e.pipeFamily) {
+        const ns = o.size || mapSize(e.pipeFamily, e.pipeSize, o.fam);
+        if (ns !== e.pipeSize) out.sizes.push(`${edgeLabel(e)} ${e.pipeSize}→${ns}`);
+        e.pipeFamily = o.fam; e.pipeSize = ns; (e.fittings || []).forEach(f => { f.size = ""; });
+      } else if (o.size && (o.fam ? o.fam === e.pipeFamily : true) && lookupPipe(e.pipeFamily, o.size)) e.pipeSize = o.size;
+      if (o.kind && DB.KINDS.some(k => k.id === o.kind)) e.kind = o.kind;
+    });
+    return out;
+  }
+  // Μαζικά εξαρτήματα: op "add" (type, qty) ή "del" (όλα τα εξαρτήματα αυτού του είδους). Επιστρέφει πλήθος.
+  function bulkFittings(ids, op, type, qty) {
+    const S = new Set(ids), def = findFittingDef(type); let n = 0;
+    project.net.edges.forEach(e => {
+      if (!S.has(e.id) || e.direct) return;
+      e.fittings = e.fittings || [];
+      if (op === "add" && def) { e.fittings.push({ type: def.name, size: "", qty: Math.max(1, Math.round(num(qty)) || 1), zeta: def.zeta || "", kv: def.kv || "" }); n++; }
+      else if (op === "del") { const b = e.fittings.length; e.fittings = e.fittings.filter(f => f.type !== type); n += b - e.fittings.length; }
+    });
+    return n;
   }
   function findFittingDef(name) {
     for (const cat of DB.FITTINGS) { const it = cat.items.find(i => i.name === name); if (it) return it; }
@@ -1120,6 +1157,7 @@
     .schem .seg.moving{opacity:.7}
     .schem .ghost{fill:#0B6FB8;fill-opacity:.08;stroke:#0B6FB8;stroke-width:1.5;stroke-dasharray:6 4}
     .schem .ghost.busy{fill:#B42318;stroke:#B42318}
+    .schem .ln-msel{fill:none;stroke:#0B6FB8;stroke-opacity:.35;stroke-width:10;stroke-dasharray:7 4;stroke-linecap:round}
     .schem .mhalo{fill:#0B6FB8;fill-opacity:.07;stroke:#0B6FB8;stroke-width:1.5;stroke-dasharray:5 3}
     .schem .band{fill:#0B6FB8;fill-opacity:.06;stroke:#0B6FB8;stroke-width:1;stroke-dasharray:4 3;pointer-events:none}
     .schem .guide{stroke:#0B6FB8;stroke-width:1;stroke-dasharray:4 4;opacity:.75;pointer-events:none}
@@ -1547,7 +1585,7 @@
         if (warns.length) labels += badge(Math.max(s1, s2) - 12, sy - 14, warns);
       } else if (c.Q > 0) labels += `<text x="${mx}" y="${sy + 16}" text-anchor="middle" class="t-q">${fmt(c.Q, 2)} m³/h</text>`;
       L.push({ leg: legLen, s: `<g class="seg ${sel ? "sel" : ""} ${dimE(e.id) ? "dim" : ""}" ${interactive ? `data-act="pick" data-id="${esc(e.id)}" role="button" tabindex="0" aria-label="Σωλήνας ${esc(code)}"` : ""}>
-        ${sel ? `<path d="${d}" class="ln-halo"/>` : ""}<path d="${d}" class="${cls}"/>${interactive ? `<path d="${d}" class="ln-hit"/>` : ""}
+        ${sel ? `<path d="${d}" class="ln-halo"/>` : ""}${interactive && multiSelE.has(e.id) ? `<path d="${d}" class="ln-msel"/>` : ""}<path d="${d}" class="${cls}"/>${interactive ? `<path d="${d}" class="ln-hit"/>` : ""}
         <path d="${arrow}" class="arr ${onWorst.has(e.id) ? (isRet ? "wr" : "w") : ""}"/>${labels}</g>` });
       edgeAnchors.set(e.id, { x: s2 - 38, y: sy + 22, hw: 11 });
       if (sel) PL.push(plusBtn(s2 - 38, sy + 22, e.id, `Παρεμβολή σημείου ή εξοπλισμού στον ${code}`, "plus-edge"));
@@ -1815,12 +1853,50 @@
     const net = project.mode === "network";
     const edge = net && selId && project.net.edges.find(e => e.id === selId);
     const node = net && selNode && project.net.nodes.find(n => n.id === selNode);
+    if (net && multiSelE.size && !edge && !node) {
+      dr.innerHTML = `<div class="dr-h"><span>Μαζική αλλαγή</span><button class="icon" data-act="bulk-clear" aria-label="Κλείσιμο">✕</button></div>
+        <div class="dr-b">${bulkHtml()}</div>`;
+      dr.dataset.key = "bulk"; dr.hidden = false; document.body.classList.add("drawer-open");
+      return;
+    }
     if (!edge && !node) { dr.hidden = true; dr.innerHTML = ""; delete dr.dataset.key; document.body.classList.remove("drawer-open"); return; }
     dr.innerHTML = `<div class="dr-h"><span>${edge ? "Σωλήνας" : "Εξοπλισμός / σημείο"}</span><button class="icon" data-act="close-drawer" aria-label="Κλείσιμο">✕</button></div>
       <div class="dr-b">${edge ? renderBranchCard(res) : nodeEditorHtml(res)}</div>`;
     dr.dataset.key = edge ? "e:" + edge.id : "n:" + node.id;   // ποιο στοιχείο δείχνει (για το scroll στο render)
     dr.hidden = false;
     document.body.classList.add("drawer-open");
+  }
+
+  /* Πλαίσιο μαζικής αλλαγής για τους επιλεγμένους σωλήνες (ό,τι μένει «— όπως είναι —» δεν αλλάζει) */
+  function bulkHtml() {
+    const E = project.net.edges.filter(e => multiSelE.has(e.id) && !e.direct), n = E.length;
+    const fams = [...new Set(E.map(e => e.pipeFamily))], fam = bulk.fam || (fams.length === 1 ? fams[0] : "");
+    const famD = DB.PIPE_FAMILIES.find(f => f.family === fam);
+    const cnt = a => Object.entries(a.reduce((m, k) => (m[k] = (m[k] || 0) + 1, m), {})).map(([k, v]) => `${esc(k)} <b class="num">×${v}</b>`).join(" · ");
+    const famOpts = `<option value="">— όπως είναι —</option>` + DB.PIPE_FAMILIES.map(f => `<option value="${esc(f.family)}" ${f.family === bulk.fam ? "selected" : ""}>${esc(f.family)}</option>`).join("");
+    const sizeOpts = `<option value="">${bulk.fam ? "— αυτόματα (ίδια ή αμέσως μεγαλύτερη) —" : "— όπως είναι —"}</option>` + (famD ? famD.sizes.map(x => `<option ${x[0] === bulk.size ? "selected" : ""}>${esc(x[0])}</option>`).join("") : "");
+    const kindOpts = `<option value="">— όπως είναι —</option>` + DB.KINDS.map(k => `<option value="${k.id}" ${k.id === bulk.kind ? "selected" : ""}>${esc(k.label)}</option>`).join("");
+    const fitType = bulk.fit || DB.FITTINGS[0].items[0].name;
+    return `<section class="card br-card" id="sec-bulk">
+      <div class="br-h"><h2>${n} σωλήνες επιλεγμένοι</h2><span class="brh-btns"><button class="ghost small" data-act="bulk-clear">Ακύρωση επιλογής</button></span></div>
+      <p class="desc">Υλικό: ${cnt(E.map(e => e.pipeFamily))}<br>Διατομή: ${cnt(E.map(e => e.pipeSize))}</p>
+      ${sub("Α", "Υλικό, διατομή, μήκος", "bulkA", `
+        <div class="grid g2">
+          ${field("Υλικό", `<select data-bulk="fam">${famOpts}</select>`)}
+          ${field("Διατομή", `<select data-bulk="size" ${famD ? "" : "disabled"}>${sizeOpts}</select>`)}
+        </div>
+        ${field("Το μήκος είναι", `<select data-bulk="kind">${kindOpts}</select>`)}
+        <p class="desc">${famD ? "" : fams.length > 1 ? "Διαφορετικά υλικά: διάλεξε υλικό για να αλλάξεις διατομή. " : ""}Με αλλαγή υλικού η διατομή κρατά το ίδιο όνομα αν υπάρχει, αλλιώς παίρνει την αμέσως μεγαλύτερη εσωτερική διάμετρο — κάθε αλλαγή σου γράφεται.</p>
+        <button class="add" data-act="bulk-pipe">Εφαρμογή σε ${n} σωλήνες</button>`)}
+      ${sub("Β", "Εξαρτήματα", "bulkB", `
+        <div class="grid g2">
+          ${field("Είδος", `<select data-bulk="fit">${fittingSelectHTML(fitType)}</select>`)}
+          ${field("Τεμ. ανά σωλήνα", `<input type="number" data-bulk="qty" value="${esc(bulk.qty)}" min="1" step="1">`)}
+        </div>
+        <button class="add" data-act="bulk-fit-add">+ Πρόσθεσε σε ${n} σωλήνες</button>
+        <button class="add" data-act="bulk-fit-del">− Αφαίρεσε αυτό το είδος από ${n} σωλήνες</button>`)}
+      <p class="desc">Επιλογή: Shift/Ctrl+κλικ σε σωλήνα · παράθυρο σε κενό σημείο · Ctrl+A όλα · Esc ακύρωση. Αναίρεση: Ctrl+Z.</p>
+    </section>`;
   }
 
   /* ---------------- RENDER: βοηθητικά ---------------- */
@@ -2325,6 +2401,7 @@
     } else if (!selId && res.tree.order.length) selId = res.tree.order[0];
     document.body.classList.toggle("net-full", netFull && res.mode === "network");
     if (multiSel.size) { const ok = new Set(res.mode === "network" ? project.net.nodes.map(n => n.id) : []); multiSel.forEach(id => { if (!ok.has(id)) multiSel.delete(id); }); }
+    if (multiSelE.size) { const ok = new Set(res.mode === "network" ? project.net.edges.filter(e => !e.direct).map(e => e.id) : []); multiSelE.forEach(id => { if (!ok.has(id)) multiSelE.delete(id); }); }
     const dr = $("#drawer"), ob = dr && dr.querySelector(".dr-b"), wasKey = dr && dr.dataset.key, top = ob ? ob.scrollTop : 0;
     renderMain(res);
     renderDrawer(res);
@@ -2456,6 +2533,7 @@
     const t = e.target;
     if (t.tagName === "SELECT" || t.type === "checkbox") return;   // στο change
     const ds = t.dataset;
+    if (ds.bulk) { bulk[ds.bulk] = t.value; return; }
     if (ds.meta) { project.meta[ds.meta] = t.value; liveRecalc(); return; }
     if (ds.p) { project[ds.p] = t.value; liveRecalc(); return; }
     if (ds.start) { project.start[ds.start] = t.value; liveRecalc(); return; }
@@ -2480,6 +2558,7 @@
   function onChange(e) {
     const t = e.target, ds = t.dataset;
     if (t.tagName !== "SELECT" && t.type !== "checkbox") return;
+    if (ds.bulk) { bulk[ds.bulk] = t.value; if (ds.bulk === "fam") bulk.size = ""; renderDrawer(calcProject()); return; }
     if (ds.p === "fluid") { project.fluid = t.value; render(); return; }
     if (ds.p === "openCircuit") { project.openCircuit = t.value === "1"; render(); return; }
     if (ds.p === "aged") { project.aged = t.checked; liveRecalc(); return; }
@@ -2523,16 +2602,23 @@
       pop = null; render(); return;
     }
     if (project.mode === "network") {
-      if (a === "pick") { multiSel.clear(); selId = id; selNode = null; pop = null; render(); return; }
+      if (a === "pick") {
+        if (e.shiftKey || e.ctrlKey || e.metaKey) {
+          if (!multiSelE.size && selId) multiSelE.add(selId);
+          if (multiSelE.has(id)) multiSelE.delete(id); else multiSelE.add(id);
+          selId = null; selNode = null; pop = null; render(); return;
+        }
+        multiSel.clear(); multiSelE.clear(); selId = id; selNode = null; pop = null; render(); return;
+      }
       if (a === "pick-node") {
         if (e.shiftKey || e.ctrlKey || e.metaKey) {
           if (!multiSel.size && selNode) multiSel.add(selNode);
           if (multiSel.has(id)) multiSel.delete(id); else multiSel.add(id);
           selNode = null; selId = null; pop = null; render();
-          if (multiSel.size > 1) toast(`Επιλεγμένα: ${multiSel.size}. Σύρε ένα για να τα μετακινήσεις όλα (ή βελάκια) · Esc = ακύρωση.`);
+          if (multiSel.size > 1) toast(`Επιλεγμένα: ${multiSel.size} σημεία. Σύρε ένα για να τα μετακινήσεις όλα (ή βελάκια) · Esc = ακύρωση.`);
           return;
         }
-        multiSel.clear(); selNode = id; selId = null; pop = null; render(); return;
+        multiSel.clear(); multiSelE.clear(); selNode = id; selId = null; pop = null; render(); return;
       }
       if (a === "plus" || a === "plus-node") { pop = pop && pop.id === id && !t.dataset.dir ? null : { id, dir: t.dataset.dir || "out" }; renderNetPop(calcProject()); return; }
       if (a === "plus-edge") { pop = pop && pop.id === id ? null : { id, edge: true }; renderNetPop(calcProject()); return; }
@@ -2545,6 +2631,19 @@
       if (a === "del-node") { delNode(id); return; }
       if (a === "del") { delEdge(id); return; }
       if (a === "close-drawer") { selId = null; selNode = null; render(); return; }
+      if (a === "bulk-clear") { multiSelE.clear(); multiSel.clear(); render(); return; }
+      if (a === "bulk-pipe") {
+        const ids = [...multiSelE]; if (!ids.length || (!bulk.fam && !bulk.size && !bulk.kind)) { toast("Δεν διάλεξες τι να αλλάξει."); return; }
+        snap(); const r = bulkPipes(ids, bulk); bulk.size = ""; render();
+        toast(`Άλλαξαν ${r.n} σωλήνες${bulk.fam ? " → " + bulk.fam : ""}.${r.sizes.length ? " Διατομή: " + r.sizes.slice(0, 6).join(", ") + (r.sizes.length > 6 ? ` (+${r.sizes.length - 6})` : "") : ""}`, true);
+        return;
+      }
+      if (a === "bulk-fit-add" || a === "bulk-fit-del") {
+        const ids = [...multiSelE], type = bulk.fit || DB.FITTINGS[0].items[0].name; if (!ids.length) return;
+        snap(); const k = bulkFittings(ids, a === "bulk-fit-add" ? "add" : "del", type, bulk.qty); render();
+        toast(a === "bulk-fit-add" ? `Προστέθηκε «${type}» ×${Math.max(1, Math.round(num(bulk.qty)) || 1)} σε ${k} σωλήνες.` : `Αφαιρέθηκαν ${k} εξαρτήματα «${type}».`, true);
+        return;
+      }
       if (a === "net-expand") { netFull = !netFull; zoomFit = netFull; if (!netFull) netZoom = 1; render(); return; }
       if (a === "auto-layout") { snap(); const mk = project.draw === "line" ? "line" : "u"; project.net.nodes.forEach(n => { if (n.grid) { delete n.grid[mk]; if (!Object.keys(n.grid).length) delete n.grid; } }); project.net.edges.forEach(e => { if (e.route) { delete e.route[mk]; if (!Object.keys(e.route).length) delete e.route; } }); render(); toast("Αυτόματη διάταξη (θέσεις και διαδρομές).", true); return; }
       if (a === "reset-size") { const n = curNode(); if (n && n.size) { snap(); delete n.size; render(); } return; }
@@ -2597,10 +2696,10 @@
       return;
     }
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === "z" || e.key === "Z") && !/INPUT|SELECT|TEXTAREA/.test((e.target && e.target.tagName) || "")) { e.preventDefault(); undo(); return; }
-    if (e.key === "Escape" && multiSel.size) { multiSel.clear(); render(); return; }
+    if (e.key === "Escape" && (multiSel.size || multiSelE.size)) { multiSel.clear(); multiSelE.clear(); render(); return; }
     if ((e.ctrlKey || e.metaKey) && (e.key === "a" || e.key === "A") && project.mode === "network" && $("#schem svg") && !/INPUT|SELECT|TEXTAREA/.test((e.target && e.target.tagName) || "") && !(e.target && e.target.isContentEditable)) {
-      e.preventDefault(); multiSel = new Set(project.net.nodes.map(n => n.id)); selNode = null; selId = null; pop = null; render();
-      toast(`Επιλέχθηκαν όλα (${multiSel.size}). Σύρε ένα για να τα μετακινήσεις όλα μαζί · Esc = ακύρωση.`); return;
+      e.preventDefault(); multiSel = new Set(project.net.nodes.map(n => n.id)); multiSelE = new Set(project.net.edges.filter(x => !x.direct).map(x => x.id)); selNode = null; selId = null; pop = null; render();
+      toast(`Επιλέχθηκαν όλα: ${multiSel.size} σημεία, ${multiSelE.size} σωλήνες. Αλλαγές σε όλους στο πλαίσιο δεξιά · σύρε ένα σημείο για μετακίνηση · Esc = ακύρωση.`); return;
     }
     if (e.key === "Escape") {
       if (pop) { pop = null; const p = $("#pop"); if (p) { p.hidden = true; p.innerHTML = ""; } return; }
@@ -2797,14 +2896,16 @@
       if (!drag) return;
       const d = drag; drag = null;
       if (d.kind === "band") {
-        if (!d.moved) { if (multiSel.size) { multiSel.clear(); render(); } return; }   // απλό κλικ σε κενό → καθαρίζει την επιλογή
+        if (!d.moved) { if (multiSel.size || multiSelE.size) { multiSel.clear(); multiSelE.clear(); render(); } return; }   // απλό κλικ σε κενό → καθαρίζει την επιλογή
         noClickUntil = Date.now() + 350;
         const [x1, y1, x2, y2] = d.box || [0, 0, 0, 0], inside = [...schemGeom.nodes].filter(([, o]) => o.x >= x1 && o.x <= x2 && o.y >= y1 && o.y <= y2).map(([k]) => k);
-        if (!d.add) multiSel = new Set();
-        inside.forEach(id => multiSel.add(id));
-        if (multiSel.size) { selNode = null; selId = null; pop = null; }
+        // Σωλήνες: όσοι βρίσκονται ολόκληροι μέσα στο παράθυρο
+        const insideE = project.net.edges.filter(e => !e.direct && schemGeom.edges.get(e.id) && schemGeom.edges.get(e.id).pts.every(q => q.x >= x1 && q.x <= x2 && q.y >= y1 && q.y <= y2)).map(e => e.id);
+        if (!d.add) { multiSel = new Set(); multiSelE = new Set(); }
+        inside.forEach(id => multiSel.add(id)); insideE.forEach(id => multiSelE.add(id));
+        if (multiSel.size || multiSelE.size) { selNode = null; selId = null; pop = null; }
         render();
-        if (multiSel.size) toast(`Επιλεγμένα: ${multiSel.size}. Σύρε ένα για να τα μετακινήσεις όλα μαζί (ή βελάκια) · Esc = ακύρωση.`);
+        if (multiSel.size || multiSelE.size) toast(`Επιλεγμένα: ${multiSel.size} σημεία, ${multiSelE.size} σωλήνες. Σύρε ένα σημείο για μετακίνηση · αλλαγές σωλήνων στο πλαίσιο δεξιά · Esc = ακύρωση.`);
         return;
       }
       if (!d.moved) return;
@@ -3192,7 +3293,7 @@
     nuWater, interp, fluidProps, lookupPipe, calcPipe, calcFitting, calcBranch,
     calcProject, validate, friction, qOf, fitPump, opPoint, normalize, vMaxFor, toKPa, toM, nextCode,
     setMode, treeOf, schematicNet, parseProjectText, calcNetwork, treeToGraph, chainToGraph, graphOf,
-    delNode, delEdge, insertOnEdge, netAdd, undo, nearestFree, shiftRoutes, moveNodes,
+    delNode, delEdge, insertOnEdge, netAdd, undo, nearestFree, shiftRoutes, moveNodes, mapSize, bulkPipes, bulkFittings,
     geometry() { return schemGeom; },
     setProject(p) { project = p; },
     getProject() { return project; }
