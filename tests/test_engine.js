@@ -657,6 +657,45 @@ console.log("\n[18] Κόμβος / ταφ σχεδιάζεται ως τελεί
     truthy("Θέση NaN / διαδρομή NaN αγνοούνται — σχέδιο χωρίς NaN", !svg.includes("NaN")); }
 }
 
+/* =========================== 19. Ελεύθερο σχέδιο (2.8.5) =========================== */
+console.log("\n[19] Ελεύθερο σχέδιο: πάγωμα, νέο στοιχείο δίπλα στην πηγή, ελεύθερη θέση, διαδρομές που ακολουθούν");
+{
+  const nodes = [Nd("P", "pump"), Nd("J", "junction"), Nd("R", "junction"),
+    Nd("T1", "fcu", { Q: 1, dP: 20 }), Nd("T2", "fcu", { Q: 1, dP: 20 }), Nd("T3", "fcu", { Q: 1, dP: 20 })];
+  const edges = [Pp("a", "P", "J", "Φ40", 5), Pp("t1", "J", "T1", "Φ25", 3), Pp("t2", "J", "T2", "Φ25", 3), Pp("t3", "J", "T3", "Φ25", 3),
+    Pp("u1", "T1", "R", "Φ25", 3), Pp("u2", "T2", "R", "Φ25", 3), Pp("u3", "T3", "R", "Φ25", 3), Pp("b", "R", "P", "Φ40", 5)];
+  const mk19 = () => ({ mode: "network", meta: {}, fluid: "water", waterTemp: 45, marginPct: 0, extras: [], branches: [], net: { nodes: JSON.parse(JSON.stringify(nodes)), edges: JSON.parse(JSON.stringify(edges)) } });
+  const boxes = G => [...G.nodes].map(([k, o]) => ({ k, l: o.x - o.hw, r: o.x + o.hw, t: o.top, b: o.bot }));
+  const clash = G => { const B = boxes(G), out = []; for (let i = 0; i < B.length; i++) for (let j = i + 1; j < B.length; j++) { const a = B[i], b = B[j]; if (a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b) out.push(a.k + "/" + b.k); } return out; };
+  // Χωρίς σύρσιμο: καθαρή αυτόματη διάταξη, κανένα σημείο δεν «καρφώνεται»
+  E.setProject(E.normalize(mk19())); E.schematicNet(E.calcProject(), true, 900);
+  truthy("Χωρίς σύρσιμο: καμία θέση δεν αποθηκεύεται (αυτόματη διάταξη)", E.getProject().net.nodes.every(n => !n.grid));
+  // Ένα σημείο συρμένο → όλα παίρνουν σταθερή θέση, κανένα πάνω σε άλλο
+  const p1 = mk19(); p1.net.nodes.find(n => n.id === "T2").grid = { u: { x: 360, y: 480 } };
+  E.setProject(E.normalize(p1)); const H1 = E.calcProject().H; E.schematicNet(E.calcProject(), true, 900); const G1 = E.geometry();
+  truthy("Πάγωμα: μετά από σύρσιμο όλα τα σημεία έχουν σταθερή θέση", E.getProject().net.nodes.every(n => n.grid && n.grid.u && isFinite(n.grid.u.x)));
+  truthy("Πάγωμα: κανένα σημείο πάνω σε άλλο (και το συρμένο T2 μέσα στη διάταξη)", !clash(G1).length, clash(G1).join(", "));
+  const before = JSON.stringify(E.getProject().net.nodes.map(n => n.grid));
+  // Νέο στοιχείο από το T1: μπαίνει δίπλα του, ελεύθερο, και τα υπόλοιπα ΔΕΝ μετακινούνται
+  E.netAdd("T1", "fcu"); E.schematicNet(E.calcProject(), true, 900); const G2 = E.geometry();
+  const pn = E.getProject().net.nodes, nw = pn[pn.length - 1], t1 = G2.nodes.get("T1"), nn = G2.nodes.get(nw.id);
+  truthy("Νέο στοιχείο: δίπλα στην πηγή του (≤ 1 στήλη + γραμμή απόσταση)", Math.abs(nn.x - t1.x) <= 330 && Math.abs(nn.y - t1.y) <= 220, `T1 (${t1.x},${t1.y}) νέο (${nn.x},${nn.y})`);
+  truthy("Νέο στοιχείο: σε ελεύθερη θέση και κρατά τη θέση του", !clash(G2).length && nw.grid && nw.grid.u, clash(G2).join(", "));
+  truthy("Νέο στοιχείο: τα υπάρχοντα σημεία δεν πήδηξαν", JSON.stringify(pn.slice(0, -1).map(n => n.grid)) === before);
+  close("Πάγωμα: ίδιο H (μόνο σχέδιο)", (() => { E.setProject(E.normalize(p1)); return E.calcProject().H; })(), H1, 1e-12);
+  // Πιο κοντινή ελεύθερη θέση: πλέγμα 10 px, παρακάμπτει το πιασμένο
+  const okFree = (x, y) => !(x >= 100 && x <= 200 && y >= 100 && y <= 200);   // πιασμένο: τετράγωνο 100–200
+  const nf = E.nearestFree(150, 150, okFree);
+  truthy("Ελεύθερη θέση: η πιο κοντινή έξω από το πιασμένο (60 px), στο πλέγμα 10 px", nf && okFree(nf.x, nf.y) && nf.x % 10 === 0 && nf.y % 10 === 0 && Math.hypot(nf.x - 150, nf.y - 150) === 60, JSON.stringify(nf));
+  truthy("Ελεύθερη θέση: ελεύθερο σημείο μένει ίδιο (στρογγυλεμένο στο πλέγμα)", JSON.stringify(E.nearestFree(43, 57, () => true)) === '{"x":40,"y":60}');
+  // Διαδρομή που έσυρες: ακολουθεί το σημείο όταν μετακινείται
+  const p2 = mk19(); p2.net.edges.find(e => e.id === "t2").route = { u: { pts: [[500, 168], [500, 200]] } }; p2.net.edges.find(e => e.id === "u2").route = { u: { pts: [[700, 168], [700, 400]] } };
+  E.setProject(E.normalize(p2)); E.shiftRoutes("T2", 640, 168, 640, 228, "u");
+  const r2 = E.getProject().net.edges;
+  truthy("Διαδρομή: σημείο του t2 που ΔΕΝ είναι στο ύψος/άξονα του T2 μένει ίδιο", JSON.stringify(r2.find(e => e.id === "t2").route.u.pts) === "[[500,168],[500,200]]", JSON.stringify(r2.find(e => e.id === "t2").route.u.pts));
+  truthy("Διαδρομή: το πρώτο σημείο του u2 (στο ύψος του T2) ακολουθεί +60", JSON.stringify(r2.find(e => e.id === "u2").route.u.pts) === "[[700,228],[700,400]]", JSON.stringify(r2.find(e => e.id === "u2").route.u.pts));
+}
+
 /* =========================== Σύνοψη =========================== */
 console.log(`\n========== ${pass} passed, ${fail} failed ==========`);
 process.exit(fail ? 1 : 0);
