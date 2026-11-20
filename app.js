@@ -26,6 +26,7 @@
   let selId = null;
   let pop = null;            // ανοιχτό μενού «+» στο σχηματικό: { id, x, y }
   let curveOpen = false;
+  let multiSel = new Set();  // πολλαπλή επιλογή σημείων (παράθυρο · Shift/Ctrl+κλικ · Ctrl+A)
   let selNode = null;        // επιλεγμένο σημείο στο δίκτυο
   let netFull = false;       // μεγέθυνση του σχεδίου
   let netZoom = 1, zoomFit = false;   // zoom σχεδίου (fit = χωράει ολόκληρο)
@@ -1119,6 +1120,8 @@
     .schem .seg.moving{opacity:.7}
     .schem .ghost{fill:#0B6FB8;fill-opacity:.08;stroke:#0B6FB8;stroke-width:1.5;stroke-dasharray:6 4}
     .schem .ghost.busy{fill:#B42318;stroke:#B42318}
+    .schem .mhalo{fill:#0B6FB8;fill-opacity:.07;stroke:#0B6FB8;stroke-width:1.5;stroke-dasharray:5 3}
+    .schem .band{fill:#0B6FB8;fill-opacity:.06;stroke:#0B6FB8;stroke-width:1;stroke-dasharray:4 3;pointer-events:none}
     .schem .guide{stroke:#0B6FB8;stroke-width:1;stroke-dasharray:4 4;opacity:.75;pointer-events:none}
 .schem .nd{touch-action:none}
     .schem .nd.dragging{opacity:.85;cursor:grabbing}
@@ -1160,16 +1163,37 @@
     return null;
   }
   // Όταν μετακινείται σημείο, οι διαδρομές που έσυρες στους σωλήνες του το ακολουθούν (το πρώτο/τελευταίο σημείο τους)
-  function shiftRoutes(nodeId, ox, oy, nx, ny, mk) {
+  function shiftRoutes(nodeId, ox, oy, nx, ny, mk, group) {
     const dx = nx - ox, dy = ny - oy;
     if (!dx && !dy) return;
     project.net.edges.forEach(e => {
       const pts = e.route && e.route[mk] && e.route[mk].pts;
       if (!Array.isArray(pts) || !pts.length || e.from === e.to) return;
+      if (group && group.has(e.from) && group.has(e.to)) return;   // μετακινείται ολόκληρος (moveNodes)
       const fix = q => { if (Math.abs(q[1] - oy) <= 1) q[1] += dy; if (Math.abs(q[0] - ox) <= 1) q[0] += dx; };
       if (e.from === nodeId) fix(pts[0]);
       if (e.to === nodeId) fix(pts[pts.length - 1]);
     });
+  }
+  /* Μετακίνηση ομάδας σημείων κατά (dx, dy): σωλήνες ανάμεσά τους μετακινούνται ολόκληροι (και οι διαδρομές τους),
+     σωλήνες προς σημεία εκτός ομάδας προσαρμόζουν μόνο το άκρο τους. */
+  function moveNodes(ids, dx, dy, mk) {
+    const S = new Set(ids);
+    project.net.edges.forEach(e => {
+      const pts = e.route && e.route[mk] && e.route[mk].pts;
+      if (Array.isArray(pts) && S.has(e.from) && S.has(e.to)) pts.forEach(q => { q[0] = Math.round(q[0] + dx); q[1] = Math.round(q[1] + dy); });
+    });
+    ids.forEach(id => {
+      const o = schemGeom && schemGeom.nodes.get(id), n = project.net.nodes.find(m => m.id === id); if (!o || !n) return;
+      const nx = Math.round(o.x + dx), ny = Math.round(o.y + dy);
+      shiftRoutes(id, o.x, o.y, nx, ny, mk, S);
+      n.grid = { ...(n.grid || {}), [mk]: { x: nx, y: ny } };
+    });
+  }
+  // Ελεύθερη θέση για όλη την ομάδα μετατοπισμένη κατά (dx, dy) — μόνο ως προς σημεία ΕΚΤΟΣ ομάδας
+  function groupFree(G, ids, dx, dy) {
+    const S = new Set(ids), G2 = { nodes: new Map([...G.nodes].filter(([k]) => !S.has(k))) };
+    return ids.every(id => { const o = G.nodes.get(id); if (!o) return true; const x = o.x + dx, y = o.y + dy; return x - o.hw >= 10 && y - (o.y - o.top) >= 10 && !overlapsGeo(G2, id, x, y, o); });
   }
   // «Πάγωμα»: κάθε σημείο κρατά τη θέση που έχει στην οθόνη — μετά από το πρώτο σύρσιμο τίποτα δεν ξαναπηδάει
   function freezeAll(mk) {
@@ -1589,6 +1613,7 @@
         body += `<g class="vsl"><title>Δοχείο διαστολής και πλήρωση — σημείο μηδέν</title><path d="M${vx} ${vy + 9} V${vy + 16}"/><rect x="${vx - 9}" y="${vy - 11}" width="18" height="20" rx="7"/><text x="${vx}" y="${vy + 2.5}" text-anchor="middle">ΔΔ</text></g>`;
       }
       if (!geoN.has(n.id)) geoN.set(n.id, { x, y, hw: n.type === PUMP ? 22 : hw + 6, top: n.type === PUMP ? y - 22 : top - 12, bot: n.type === PUMP ? y + 44 : bot + 12 });
+      if (interactive && multiSel.has(n.id)) { const o = geoN.get(n.id); body = `<rect x="${o.x - o.hw - 5}" y="${o.top - 5}" width="${2 * o.hw + 10}" height="${o.bot - o.top + 10}" rx="10" class="mhalo"/>` + body; }
       N.push(`<g class="nd ${dimN(n.id) ? "dim" : ""}" ${attrs}>${body}</g>`);
       if (interactive) PL.push(plusBtn(px, py, n.id, `Νέος σωλήνας ή σύνδεση από ${nodeLabel(n)}`));
     });
@@ -2299,6 +2324,7 @@
       if (selNode && !res.ncById.has(selNode)) selNode = null;
     } else if (!selId && res.tree.order.length) selId = res.tree.order[0];
     document.body.classList.toggle("net-full", netFull && res.mode === "network");
+    if (multiSel.size) { const ok = new Set(res.mode === "network" ? project.net.nodes.map(n => n.id) : []); multiSel.forEach(id => { if (!ok.has(id)) multiSel.delete(id); }); }
     const dr = $("#drawer"), ob = dr && dr.querySelector(".dr-b"), wasKey = dr && dr.dataset.key, top = ob ? ob.scrollTop : 0;
     renderMain(res);
     renderDrawer(res);
@@ -2497,8 +2523,17 @@
       pop = null; render(); return;
     }
     if (project.mode === "network") {
-      if (a === "pick") { selId = id; selNode = null; pop = null; render(); return; }
-      if (a === "pick-node") { selNode = id; selId = null; pop = null; render(); return; }
+      if (a === "pick") { multiSel.clear(); selId = id; selNode = null; pop = null; render(); return; }
+      if (a === "pick-node") {
+        if (e.shiftKey || e.ctrlKey || e.metaKey) {
+          if (!multiSel.size && selNode) multiSel.add(selNode);
+          if (multiSel.has(id)) multiSel.delete(id); else multiSel.add(id);
+          selNode = null; selId = null; pop = null; render();
+          if (multiSel.size > 1) toast(`Επιλεγμένα: ${multiSel.size}. Σύρε ένα για να τα μετακινήσεις όλα (ή βελάκια) · Esc = ακύρωση.`);
+          return;
+        }
+        multiSel.clear(); selNode = id; selId = null; pop = null; render(); return;
+      }
       if (a === "plus" || a === "plus-node") { pop = pop && pop.id === id && !t.dataset.dir ? null : { id, dir: t.dataset.dir || "out" }; renderNetPop(calcProject()); return; }
       if (a === "plus-edge") { pop = pop && pop.id === id ? null : { id, edge: true }; renderNetPop(calcProject()); return; }
       if (a === "insert-open") { const r = $("#schemWrap"); pop = { id, edge: true }; renderNetPop(calcProject()); if (r && r.scrollIntoView) r.scrollIntoView({ block: "nearest" }); return; }
@@ -2543,6 +2578,14 @@
   }
   function onKey(e) {
     const arrows = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+    if (arrows[e.key] && project.mode === "network" && multiSel.size && schemGeom && !/INPUT|SELECT|TEXTAREA/.test((e.target && e.target.tagName) || "") && !(e.target && e.target.isContentEditable)) {
+      e.preventDefault();
+      const st = e.shiftKey ? 1 : GRID, [ax, ay] = arrows[e.key], ids = [...multiSel];
+      if (!groupFree(schemGeom, ids, ax * st, ay * st)) return;   // κάποιο πέφτει πάνω σε άλλο → μένουν
+      const mk = project.draw === "line" ? "line" : "u";
+      snap(); freezeAll(mk); moveNodes(ids, ax * st, ay * st, mk); render();
+      return;
+    }
     if (arrows[e.key] && project.mode === "network" && selNode && schemGeom && !/INPUT|SELECT|TEXTAREA/.test((e.target && e.target.tagName) || "") && !(e.target && e.target.isContentEditable)) {
       const me = schemGeom.nodes.get(selNode), n = curNode(); if (!me || !n) return;
       e.preventDefault();
@@ -2554,6 +2597,11 @@
       return;
     }
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === "z" || e.key === "Z") && !/INPUT|SELECT|TEXTAREA/.test((e.target && e.target.tagName) || "")) { e.preventDefault(); undo(); return; }
+    if (e.key === "Escape" && multiSel.size) { multiSel.clear(); render(); return; }
+    if ((e.ctrlKey || e.metaKey) && (e.key === "a" || e.key === "A") && project.mode === "network" && $("#schem svg") && !/INPUT|SELECT|TEXTAREA/.test((e.target && e.target.tagName) || "") && !(e.target && e.target.isContentEditable)) {
+      e.preventDefault(); multiSel = new Set(project.net.nodes.map(n => n.id)); selNode = null; selId = null; pop = null; render();
+      toast(`Επιλέχθηκαν όλα (${multiSel.size}). Σύρε ένα για να τα μετακινήσεις όλα μαζί · Esc = ακύρωση.`); return;
+    }
     if (e.key === "Escape") {
       if (pop) { pop = null; const p = $("#pop"); if (p) { p.hidden = true; p.innerHTML = ""; } return; }
       if (project.mode === "network" && (selId || selNode)) { selId = null; selNode = null; render(); return; }
@@ -2615,7 +2663,15 @@
       if (rz) { const me = schemGeom.nodes.get(rz.dataset.rsz); if (me) { drag = { kind: "size", id: rz.dataset.rsz, me, x0: e.clientX, y0: e.clientY, moved: false, ...scroll0() }; e.preventDefault(); } return; }
       if (e.target.closest(".port-free, .plus, .delb")) return;
       const nd = e.target.closest("#schem g.nd");
-      if (nd) { const me = schemGeom.nodes.get(nd.dataset.id); if (me) drag = { kind: "node", id: nd.dataset.id, el: nd, me, x0: e.clientX, y0: e.clientY, moved: false, ...scroll0() }; return; }
+      if (nd) {
+        const me = schemGeom.nodes.get(nd.dataset.id); if (!me) return;
+        if (multiSel.size > 1 && multiSel.has(nd.dataset.id)) {
+          // Σύρσιμο ενός επιλεγμένου → μετακινούνται όλα τα επιλεγμένα
+          const members = [...multiSel].map(id => ({ id, me: schemGeom.nodes.get(id), el: document.querySelector(`#schem g.nd[data-id="${CSS.escape(id)}"]`) })).filter(m => m.me);
+          drag = { kind: "group", id: nd.dataset.id, me, members, x0: e.clientX, y0: e.clientY, moved: false, ...scroll0() };
+        } else drag = { kind: "node", id: nd.dataset.id, el: nd, me, x0: e.clientX, y0: e.clientY, moved: false, ...scroll0() };
+        return;
+      }
       const sg = e.target.closest("#schem g.seg");
       if (sg) {
         const ge = schemGeom.edges.get(sg.dataset.id), svg = sg.ownerSVGElement; if (!ge || !svg || !ge.pts || ge.pts.length < 2) return;
@@ -2629,6 +2685,13 @@
         if (best < 0) return;
         const a = ge.pts[best], b = ge.pts[best + 1];
         drag = { kind: "edge", id: sg.dataset.id, el: sg, pts: ge.pts, i: best, horiz: a.y === b.y, x0: e.clientX, y0: e.clientY, moved: false, ...scroll0() };
+        return;
+      }
+      // Κενό σημείο του σχεδίου (ποντίκι): παράθυρο επιλογής· με Shift/Ctrl προσθέτει στην επιλογή
+      const svgEl = e.target.closest("#schem svg");
+      if (svgEl && e.pointerType !== "touch") {
+        const r = svgEl.getBoundingClientRect();
+        drag = { kind: "band", sx: (e.clientX - r.left) / netZoom, sy: (e.clientY - r.top) / netZoom, add: e.shiftKey || e.ctrlKey || e.metaKey, x0: e.clientX, y0: e.clientY, moved: false, ...scroll0() };
       }
     });
     /* Το φύλλο μεγαλώνει όσο σέρνεις προς τα δεξιά/κάτω (με περιθώριο), ώστε τίποτα να μην κόβεται */
@@ -2649,15 +2712,46 @@
       const wr = $("#schemWrap"), dx = (e.clientX - drag.x0 + (wr ? wr.scrollLeft - drag.sl0 : 0)) / netZoom, dy = (e.clientY - drag.y0 + (wr ? wr.scrollTop - drag.st0 : 0)) / netZoom;
       if (!drag.moved && Math.hypot(dx, dy) < 6) return;
       const G = schemGeom;
+      if (drag.kind === "band") {
+        const svg = document.querySelector("#schem svg"); if (!svg) return;
+        if (!drag.moved) { drag.moved = true; drag.rect = document.createElementNS(svgNS, "rect"); drag.rect.setAttribute("class", "band"); svg.appendChild(drag.rect); }
+        e.preventDefault(); edgeScroll(e);
+        const ex = drag.sx + dx, ey = drag.sy + dy;
+        drag.box = [Math.min(drag.sx, ex), Math.min(drag.sy, ey), Math.max(drag.sx, ex), Math.max(drag.sy, ey)];
+        drag.rect.setAttribute("x", drag.box[0]); drag.rect.setAttribute("y", drag.box[1]); drag.rect.setAttribute("width", drag.box[2] - drag.box[0]); drag.rect.setAttribute("height", drag.box[3] - drag.box[1]);
+        return;
+      }
       if (!drag.moved) {
         drag.moved = true; pop = null; const pp = $("#pop"); if (pp) pp.hidden = true;
+        if (drag.kind === "group") {
+          const svg = document.querySelector("#schem svg");
+          drag.members.forEach(m => { if (m.el) m.el.classList.add("dragging"); if (svg) { m.ghost = document.createElementNS(svgNS, "rect"); m.ghost.setAttribute("rx", "10"); m.ghost.setAttribute("class", "ghost"); svg.appendChild(m.ghost); } });
+        }
         const svg = document.querySelector("#schem svg");
         if (drag.el) drag.el.classList.add(drag.kind === "edge" ? "moving" : "dragging");
         if (svg && drag.kind !== "edge") { drag.ghost = document.createElementNS(svgNS, "rect"); drag.ghost.setAttribute("rx", "10"); svg.appendChild(drag.ghost); }
       }
       e.preventDefault();
       edgeScroll(e);
-      if (drag.kind === "node") {
+      if (drag.kind === "group") {
+        // Το σημείο που έπιασες κουμπώνει (πλέγμα / ευθυγράμμιση με σημεία εκτός ομάδας)· τα υπόλοιπα ακολουθούν κατά το ίδιο
+        const me = drag.me, ids = drag.members.map(m => m.id), S = new Set(ids), outs = [...G.nodes].filter(([k]) => !S.has(k)).map(([, o]) => o), free = e.altKey;
+        let x = me.x + dx, y = me.y + dy;
+        const mx = free ? null : magnet(x, outs.map(o => o.x), ALIGN), my = free ? null : magnet(y, outs.map(o => o.y), ALIGN);
+        if (!free) { x = mx !== null ? mx : snapGrid(x); y = my !== null ? my : snapGrid(y); }
+        let ddx = x - me.x, ddy = y - me.y, busy = !groupFree(G, ids, ddx, ddy);
+        if (busy) { const p = nearestFree(x, y, (cx, cy) => groupFree(G, ids, cx - me.x, cy - me.y)); if (p) { ddx = p.x - me.x; ddy = p.y - me.y; busy = false; } }
+        const far = drag.members.reduce((a, m) => [Math.max(a[0], m.me.x + ddx + m.me.hw), Math.max(a[1], m.me.bot + ddy)], [0, 0]);
+        growSheet(far[0], far[1]);
+        drag.to = busy || !isFinite(ddx) || !isFinite(ddy) ? null : { dx: ddx, dy: ddy };
+        drag.members.forEach(m => {
+          if (m.el) m.el.setAttribute("transform", `translate(${dx} ${dy})`);
+          if (m.ghost) { m.ghost.setAttribute("x", m.me.x + ddx - m.me.hw); m.ghost.setAttribute("y", m.me.top + ddy); m.ghost.setAttribute("width", 2 * m.me.hw); m.ghost.setAttribute("height", m.me.bot - m.me.top); m.ghost.setAttribute("class", "ghost" + (busy ? " busy" : "")); }
+        });
+        const svg = document.querySelector("#schem svg"), vb = svg && svg.viewBox && svg.viewBox.baseVal;
+        guide(svg, "gx", mx !== null && drag.to && me.x + drag.to.dx === mx, mx, 0, mx, vb ? vb.height : 0);
+        guide(svg, "gy", my !== null && drag.to && me.y + drag.to.dy === my, 0, my, vb ? vb.width : 0, my);
+      } else if (drag.kind === "node") {
         // Λεπτό πλέγμα 10 px· ευθυγράμμιση με οποιοδήποτε σημείο μόνο από ≤ 6 px· με Alt εντελώς ελεύθερα
         const me = drag.me, others = [...G.nodes].filter(([k]) => k !== drag.id).map(([, o]) => o), free = e.altKey;
         let x = me.x + dx, y = me.y + dy;
@@ -2702,11 +2796,28 @@
     document.addEventListener("pointerup", () => {
       if (!drag) return;
       const d = drag; drag = null;
+      if (d.kind === "band") {
+        if (!d.moved) { if (multiSel.size) { multiSel.clear(); render(); } return; }   // απλό κλικ σε κενό → καθαρίζει την επιλογή
+        noClickUntil = Date.now() + 350;
+        const [x1, y1, x2, y2] = d.box || [0, 0, 0, 0], inside = [...schemGeom.nodes].filter(([, o]) => o.x >= x1 && o.x <= x2 && o.y >= y1 && o.y <= y2).map(([k]) => k);
+        if (!d.add) multiSel = new Set();
+        inside.forEach(id => multiSel.add(id));
+        if (multiSel.size) { selNode = null; selId = null; pop = null; }
+        render();
+        if (multiSel.size) toast(`Επιλεγμένα: ${multiSel.size}. Σύρε ένα για να τα μετακινήσεις όλα μαζί (ή βελάκια) · Esc = ακύρωση.`);
+        return;
+      }
       if (!d.moved) return;
       noClickUntil = Date.now() + 350;
       // Σχεδιάζεις: το zoom μένει όπως είναι (το «Χωράει» δεν ξαναμικραίνει το σχέδιο μετά από κάθε σύρσιμο)
       if (zoomFit) { zoomFit = false; const f = $('[data-act="zoom"][data-v="fit"]'); if (f) f.classList.toggle("on", false); }
       const mk = project.draw === "line" ? "line" : "u";
+      if (d.kind === "group") {
+        if (!d.to) { toast("Δεν βρέθηκε ελεύθερη θέση για όλα μαζί εκεί."); renderSchematic(calcProject()); return; }
+        snap(); freezeAll(mk); moveNodes(d.members.map(m => m.id), d.to.dx, d.to.dy, mk); render();
+        toast(`Μετακινήθηκαν ${d.members.length} σημεία μαζί με τους σωλήνες τους.`, true);
+        return;
+      }
       if (d.kind === "node") {
         const n = project.net.nodes.find(x => x.id === d.id);
         if (!n || !d.to) { if (n && !d.to) toast("Δεν βρέθηκε ελεύθερη θέση εκεί."); renderSchematic(calcProject()); return; }
@@ -3081,7 +3192,7 @@
     nuWater, interp, fluidProps, lookupPipe, calcPipe, calcFitting, calcBranch,
     calcProject, validate, friction, qOf, fitPump, opPoint, normalize, vMaxFor, toKPa, toM, nextCode,
     setMode, treeOf, schematicNet, parseProjectText, calcNetwork, treeToGraph, chainToGraph, graphOf,
-    delNode, delEdge, insertOnEdge, netAdd, undo, nearestFree, shiftRoutes,
+    delNode, delEdge, insertOnEdge, netAdd, undo, nearestFree, shiftRoutes, moveNodes,
     geometry() { return schemGeom; },
     setProject(p) { project = p; },
     getProject() { return project; }

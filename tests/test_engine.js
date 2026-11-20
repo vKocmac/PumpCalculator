@@ -696,6 +696,30 @@ console.log("\n[19] Ελεύθερο σχέδιο: πάγωμα, νέο στοι
   truthy("Διαδρομή: το πρώτο σημείο του u2 (στο ύψος του T2) ακολουθεί +60", JSON.stringify(r2.find(e => e.id === "u2").route.u.pts) === "[[700,228],[700,400]]", JSON.stringify(r2.find(e => e.id === "u2").route.u.pts));
 }
 
+/* =========================== 20. Πολλαπλή επιλογή: μετακίνηση πολλών μαζί (2.8.6) =========================== */
+console.log("\n[20] Μετακίνηση ομάδας: σημεία + σωλήνες ανάμεσά τους μαζί, σωλήνες προς τα έξω μόνο στο άκρο");
+{
+  const nodes = [Nd("P", "pump"), Nd("J", "junction"), Nd("R", "junction"),
+    Nd("T1", "fcu", { Q: 1, dP: 20 }), Nd("T2", "fcu", { Q: 1, dP: 20 }), Nd("T3", "fcu", { Q: 1, dP: 20 })];
+  const edges = [Pp("a", "P", "J", "Φ40", 5), Pp("t1", "J", "T1", "Φ25", 3), Pp("t2", "J", "T2", "Φ25", 3), Pp("t3", "J", "T3", "Φ25", 3),
+    Pp("u1", "T1", "R", "Φ25", 3), Pp("u2", "T2", "R", "Φ25", 3), Pp("u3", "T3", "R", "Φ25", 3), Pp("b", "R", "P", "Φ40", 5)];
+  E.setProject(E.normalize({ mode: "network", meta: {}, fluid: "water", waterTemp: 45, marginPct: 0, extras: [], branches: [], net: { nodes, edges } }));
+  const H0 = E.calcProject().H; E.schematicNet(E.calcProject(), true, 900);
+  const G0 = E.geometry(), at = id => { const o = G0.nodes.get(id); return [o.x, o.y]; };
+  const pr = E.getProject();
+  pr.net.edges.find(e => e.id === "u2").route = { u: { pts: [[760, 168], [760, 300], [900, 300]] } };   // T2 → R: R εκτός ομάδας
+  pr.net.edges.find(e => e.id === "t2").route = { u: { pts: [[420, 168], [420, 200], [560, 200], [560, 168]] } };   // J → T2: και τα δύο στην ομάδα
+  const grp = ["J", "T1", "T2", "T3"], before = Object.fromEntries(grp.map(id => [id, at(id)]));
+  E.moveNodes(grp, 100, 40, "u");
+  const g = id => pr.net.nodes.find(n => n.id === id).grid.u;
+  truthy("Ομάδα: κάθε σημείο μετακινήθηκε ακριβώς +100 / +40", grp.every(id => g(id).x === before[id][0] + 100 && g(id).y === before[id][1] + 40), JSON.stringify(grp.map(id => [id, g(id)])));
+  truthy("Ομάδα: σημεία εκτός (P, R) έμειναν (χωρίς σταθερή θέση)", ["P", "R"].every(id => !pr.net.nodes.find(n => n.id === id).grid));
+  truthy("Σωλήνας μέσα στην ομάδα (J→T2): όλη η διαδρομή μετακινήθηκε μαζί", JSON.stringify(pr.net.edges.find(e => e.id === "t2").route.u.pts) === "[[520,208],[520,240],[660,240],[660,208]]", JSON.stringify(pr.net.edges.find(e => e.id === "t2").route.u.pts));
+  truthy("Σωλήνας προς τα έξω (T2→R): μόνο το άκρο στο T2 ακολούθησε", JSON.stringify(pr.net.edges.find(e => e.id === "u2").route.u.pts) === "[[760,208],[760,300],[900,300]]", JSON.stringify(pr.net.edges.find(e => e.id === "u2").route.u.pts));
+  const svg = E.schematicNet(E.calcProject(), true, 900).svg;
+  truthy("Μετά τη μετακίνηση: σχέδιο χωρίς NaN, ίδιο H", !svg.includes("NaN") && E.calcProject().H === H0);
+}
+
 /* =========================== Σύνοψη =========================== */
 console.log(`\n========== ${pass} passed, ${fail} failed ==========`);
 process.exit(fail ? 1 : 0);
